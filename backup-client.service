@@ -1,0 +1,21 @@
+[Unit]
+Description=Daemon de Sauvegarde - Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/Bureau/daemon-sauvegarde
+ExecStart=/usr/bin/python3 /home/%i/Bureau/daemon-sauvegarde/client.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/%i/Bureau/daemon-sauvegarde/backup_client.log
+StandardError=append:/home/%i/Bureau/daemon-sauvegarde/backup_client.log
+
+# Security
+PrivateTmp=yes
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

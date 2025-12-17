@@ -1,0 +1,15 @@
+*.pyc
+__pycache__/
+*.log
+*.swp
+*.swo
+.DS_Store
+venv/
+env/
+.env
+*.bak
+sauvegarde/
+.client.pid
+.web.pid
+web.log
+restored/

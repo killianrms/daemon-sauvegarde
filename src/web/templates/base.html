@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Système de Sauvegarde{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <h1>🛡️ Daemon Sauvegarde</h1>
+        </div>
+        <ul class="nav-menu">
+            <li><a href="/" class="nav-link">Dashboard</a></li>
+            <li><a href="/files" class="nav-link">Fichiers</a></li>
+            <li><a href="/restore" class="nav-link">Restauration</a></li>
+            <li><a href="/settings" class="nav-link">Paramètres</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>&copy; 2025 Daemon de Sauvegarde - Interface Web v1.0</p>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

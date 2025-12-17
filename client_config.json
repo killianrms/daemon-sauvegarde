@@ -1,0 +1,18 @@
+{
+  "server_host": "192.168.1.100",
+  "server_port": 22,
+  "server_username": "votre_username",
+  "ssh_key_file": "~/.ssh/id_ed25519",
+  "remote_backup_path": "/home/votre_username/backups",
+  "watch_path": "./sauvegarde",
+  "initial_sync": true,
+  "ignored_patterns": [
+    ".git",
+    "__pycache__",
+    "*.pyc",
+    "*.swp",
+    "*.tmp",
+    ".DS_Store",
+    "Thumbs.db"
+  ]
+}

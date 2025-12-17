@@ -1,0 +1,5 @@
+{
+  "backup_path": "~/backups",
+  "ssh_port": 22,
+  "allowed_users": []
+}
