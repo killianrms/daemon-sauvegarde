@@ -2,51 +2,57 @@
 
 Système de sauvegarde automatique et sécurisé avec **gestion de versions** pour protéger contre les ransomwares et les erreurs. Utilise SSH pour synchroniser des fichiers entre un client et un serveur.
 
-## Installation Serveur
 
-### Install Dépendence
+## Installation Serveur (Machine de stockage)
 
+### 1. Installation et Configuration
 ```bash
-# Installer et configurer
+# Installer les dépendances (crée un environnement virtuel)
 make install-server
+
+# Démarrer le service SSH (Crucial !)
+sudo systemctl enable --now ssh
+
+# Configurer le serveur (Génération de clés, dossiers...)
 make setup-server
 ```
 
-### Modifier `server_config.json` :
-
-```json lines
+### 2. Configuration `server_config.json`
+Le fichier est généré automatiquement, mais vous pouvez le modifier :
+```json
 {
-  // A remplir
+  "backup_path": "~/backups",
+  "ssh_port": 22,
+  "allowed_users": []
 }
 ```
 
-### Génération SSH Key
+### Génération Clés SSH
 
 ```bash
-# Générer une clé SSH si nécessaire
-ssh-keygen -t ed25519 -C "backup-client"
+# Éditer le fichier
+nano ~/.ssh/authorized_keys
+# Coller la clé publique du client sur une nouvelle ligne
+```
 
-# Copier vers le serveur
-ssh-copy-id -i ~/.ssh/id_ed25519.pub username@192.168.1.100
-
-# Tester la connexion
-make test-connection
+### 4. Interface Web
+Pour suivre les sauvegardes :
+```bash
+make web-start
+# Accès : http://localhost:5000 (Login: admin / Pass: admin)
 ```
 
 # Installation Client
 
 ### Install Dépendence
 
-```bash
+
 # Installer
 make install-client
 
-# Start systemctl
-sudo systemctl start ssh
-
 # Éditer la configuration
 nano client_config.json
-```
+
 
 ### Modifier SSH Key
 
