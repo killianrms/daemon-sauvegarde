@@ -1,9 +1,11 @@
 .PHONY: help install install-server install-client setup-server setup-client start-server start-client stop-client clean test check-deps restore restore-interactive list-versions cleanup cleanup-dry-run stats setup-cron web web-start web-stop web-status test-encryption test-delta test-integrity test-restore health-check
 
+
 # Variables
-PYTHON := python3
-PIP := pip3
+SYSTEM_PYTHON := python3
 VENV := venv
+PYTHON := $(VENV)/bin/python
+PIP := $(VENV)/bin/pip
 CLIENT_PID_FILE := .client.pid
 WEB_PID_FILE := .web.pid
 
@@ -23,33 +25,25 @@ help: ## Affiche cette aide
 
 check-deps: ## Vérifie les dépendances système
 	@echo "$(BLUE)Vérification des dépendances...$(NC)"
-	@command -v $(PYTHON) >/dev/null 2>&1 || { echo "$(RED)Python3 n'est pas installé$(NC)"; exit 1; }
+	@command -v $(SYSTEM_PYTHON) >/dev/null 2>&1 || { echo "$(RED)Python3 n'est pas installé$(NC)"; exit 1; }
 	@command -v ssh >/dev/null 2>&1 || { echo "$(RED)SSH n'est pas installé$(NC)"; exit 1; }
 	@echo "$(GREEN)✓ Dépendances système OK$(NC)"
 
-install: check-deps ## Installe les dépendances Python (client et serveur)
-	@echo "$(BLUE)Installation des dépendances Python...$(NC)"
-	@$(PIP) install --user -r requirements.txt
-	@echo "$(GREEN)✓ Dépendances installées$(NC)"
+install: install-venv ## Installe les dépendances Python (client et serveur)
 
 install-venv: check-deps ## Installe dans un environnement virtuel
 	@echo "$(BLUE)Création de l'environnement virtuel...$(NC)"
-	@$(PYTHON) -m venv $(VENV)
+	@$(SYSTEM_PYTHON) -m venv $(VENV)
 	@echo "$(BLUE)Installation des dépendances...$(NC)"
-	@$(VENV)/bin/pip install -r requirements.txt
+	@$(PIP) install -r requirements.txt
 	@echo "$(GREEN)✓ Environnement virtuel créé et configuré$(NC)"
-	@echo "$(YELLOW)Activez-le avec: source $(VENV)/bin/activate$(NC)"
 
-install-server: check-deps ## Installe et configure le serveur
-	@echo "$(BLUE)Installation du serveur...$(NC)"
-	@$(PIP) install --user -r requirements.txt
-	@echo "$(GREEN)✓ Serveur installé$(NC)"
+install-server: install-venv ## Installe et configure le serveur
+	@echo "$(BLUE)Installation du serveur terminée (venv)$(NC)"
 	@echo "$(YELLOW)Lancez 'make setup-server' pour configurer$(NC)"
 
-install-client: check-deps ## Installe et configure le client
-	@echo "$(BLUE)Installation du client...$(NC)"
-	@$(PIP) install --user -r requirements.txt
-	@echo "$(GREEN)✓ Client installé$(NC)"
+install-client: install-venv ## Installe et configure le client
+	@echo "$(BLUE)Installation du client terminée (venv)$(NC)"
 	@echo "$(YELLOW)Éditez client_config.json puis lancez 'make start-client'$(NC)"
 
 setup-server: ## Configure le serveur (génère les clés SSH, etc.)
