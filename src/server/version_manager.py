@@ -250,115 +250,98 @@ class VersionManager:
     def save_version(self, file_path, relative_path):
         """Sauvegarde une version d'un fichier avec compression, déduplication et chiffrement"""
         try:
-            # Chemin du fichier actuel
+            # Chemin du fichier actuel (cache pour hash comparison)
             current_file = self.current_dir / relative_path
             current_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Calculer le hash du nouveau fichier
+            # Calculer le hash du nouveau fichier entrant
             new_hash = self.calculate_hash(file_path)
             new_size = Path(file_path).stat().st_size
 
-            # Si le fichier existe déjà, créer une version
-            if current_file.exists():
+            # Vérifier si le fichier existe déjà et s'il a changé
+            is_new_file = not current_file.exists()
+            if not is_new_file:
                 old_hash = self.calculate_hash(current_file)
-
-                # Ne rien faire si le fichier n'a pas changé
                 if old_hash == new_hash:
-                    print(f"⊘ Fichier inchangé: {relative_path}")
+                    # print(f"⊘ Fichier inchangé: {relative_path}")
                     return True
 
-                # Créer le timestamp pour cette version
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
-                
-                # Variables pour les métadonnées
-                version_path = None
-                compressed_size = None
-                is_compressed = self.enable_compression
-                is_deduplicated = False
-                dedup_ref = None
-                is_encrypted = self.enable_encryption
-                encryption_metadata = None
-
-                # Gérer l'ancienne version avec déduplication si activée
-                if self.enable_deduplication:
-                    dedup_ref, was_dedup, enc_meta = self.get_or_create_dedup_file(current_file, old_hash, current_file.stat().st_size)
-                    is_deduplicated = True
-                    encryption_metadata = enc_meta
-                else:
-                    # Mode traditionnel sans déduplication
-                    version_subdir = self.versions_dir / timestamp
-                    version_subdir.mkdir(parents=True, exist_ok=True)
-                    version_file = version_subdir / relative_path
-                    version_file.parent.mkdir(parents=True, exist_ok=True)
-                    
-
-                    # 1. Compression
-                    temp_path = version_file
-                    if self.enable_compression:
-                        # compress_file ajoute .gz au nom et retourne le chemin complet
-                        temp_path = Path(self.compress_file(current_file, version_file))
-                        is_compressed = True
-                    else:
-                        shutil.copy2(current_file, temp_path)
-
-                    # 2. Chiffrement
-                    final_path = temp_path
-                    if self.enable_encryption and self.encryption_manager:
-                        enc_path = Path(str(temp_path) + '.enc')
-                        encryption_metadata = self.encryption_manager.encrypt_file(temp_path, enc_path)
-                        
-                        # Supprimer le fichier intermédiaire (non chiffré)
-                        if temp_path.exists():
-                            temp_path.unlink()
-                            
-                        final_path = enc_path
-                        is_encrypted = True
-                    
-                    version_path = str(final_path.relative_to(self.backup_root))
-                    compressed_size = final_path.stat().st_size
-
-
-                self.record_version(
-                    relative_path,
-                    timestamp,
-                    version_path if not is_deduplicated else dedup_ref, 
-                    current_file.stat().st_size,
-                    old_hash,
-                    'modified',
-                    is_compressed=is_compressed,
-                    is_deduplicated=is_deduplicated,
-                    dedup_ref=dedup_ref,
-                    is_encrypted=is_encrypted,
-                    encryption_metadata=encryption_metadata
-                )
-
-                print(f"✓ Version sauvegardée: {relative_path} ({timestamp})")
-
-            # Copier le nouveau fichier (TOUJOURS EN CLAIR dans current, pour comparaison diff rapide ?)
-            # Attends, si je stocke en clair dans current, c'est pas sécurisé "At Rest" si le serveur est compromis.
-            # MAIS le cahier des charges dit "protéger les données au repos".
-            # Si `current` est en clair, c'est une faille.
-            # Mais `current` sert à calculer le diff (rsync style) ou `calculate_hash`.
-            # Si je chiffre `current`, je dois le déchiffrer pour comparer le hash avec le nouveau fichier entrant ?
-            # Le client envoie un fichier. Le serveur compare.
-            # Si le serveur stocke chiffré, il ne peut pas comparer sans clé.
-            # C'est un compromis.
-            # Pour l'instant, chiffrons les *versions/historique*.
-            # Si on veut chiffrer `current`, il faut refondre la logique de sync pour comparer les hashs envoyés par le client (client side hashing).
-            # Le client envoie-t-il le hash ? Pas actuellement.
-            # Laissons `current` en clair pour l'instant (c'est un cache de travail) ou chiffrons-le aussi.
-            # Si on chiffre `current`, on ne peut plus faire `calculate_hash(current_file)` facilement.
-            # On va assumer que `current` reste en clair pour la performance de synchro, et que seul l'historique (backup long terme) est chiffré.
-            # OU on chiffre tout.
-            # Si on chiffre `current`, on doit stocker le hash de l'original qque part pour éviter de déchiffrer pour comparer.
-            # Simplification: Seules les VERSIONS archivées sont chiffrées.
-            # WARNING: This implies current working set is not encrypted.
-            # Let's check `get_or_create_dedup_file` modifications next.
+            # --- Création de la nouvelle version (Archivage du NOUVEAU fichier) ---
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
             
-            shutil.copy2(file_path, current_file)
-            print(f"✓ Fichier mis à jour: {relative_path}")
+            # Variables pour les métadonnées
+            version_path = None
+            compressed_size = None
+            is_compressed = self.enable_compression
+            is_deduplicated = False
+            dedup_ref = None
+            is_encrypted = self.enable_encryption
+            encryption_metadata = None
 
+            # 1. Gestion avec Déduplication
+            if self.enable_deduplication:
+                # On stocke le fichier entrant (file_path)
+                dedup_ref, was_dedup, enc_meta = self.get_or_create_dedup_file(file_path, new_hash, new_size)
+                is_deduplicated = True
+                encryption_metadata = enc_meta
+                # Si dédupliqué, on n'a pas de fichier physique dans versions/, juste une ref.
+                # Mais pour l'UI, on veut savoir "où" c'est ? C'est dans dedup_store.
+                version_path = dedup_ref 
+                
+            else:
+                # 2. Mode traditionnel (stockage complet dans versions/)
+                version_subdir = self.versions_dir / timestamp
+                version_subdir.mkdir(parents=True, exist_ok=True)
+                version_file = version_subdir / relative_path
+                version_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Compression
+                temp_path = version_file
+                if self.enable_compression:
+                    temp_path = Path(self.compress_file(file_path, version_file))
+                    is_compressed = True
+                else:
+                    shutil.copy2(file_path, temp_path)
+
+                # Chiffrement
+                final_path = temp_path
+                if self.enable_encryption and self.encryption_manager:
+                    enc_path = Path(str(temp_path) + '.enc')
+                    encryption_metadata = self.encryption_manager.encrypt_file(temp_path, enc_path)
+                    
+                    if temp_path.exists():
+                        temp_path.unlink()
+                        
+                    final_path = enc_path
+                    is_encrypted = True
+                
+                version_path = str(final_path.relative_to(self.backup_root))
+                compressed_size = final_path.stat().st_size
+
+            # Enregistrement en base de données
+            self.record_version(
+                relative_path,
+                timestamp,
+                version_path, 
+                new_size,
+                new_hash,
+                'modified' if not is_new_file else 'created',
+                is_compressed=is_compressed,
+                is_deduplicated=is_deduplicated,
+                dedup_ref=dedup_ref,
+                is_encrypted=is_encrypted,
+                encryption_metadata=encryption_metadata
+            )
+
+            print(f"✓ Version sauvegardée: {relative_path}")
+
+            # Mettre à jour le fichier 'current' (en clair) pour les futures comparaisons
+            # Note: On écrase l'ancien sans l'archiver car on vient d'archiver le NOUVEAU.
+            # L'ancien est censé avoir été archivé lors de son arrivée précédente.
+            shutil.copy2(file_path, current_file)
+            
             return True
+
         except Exception as e:
             print(f"✗ Erreur lors de la sauvegarde de version: {e}")
             import traceback
