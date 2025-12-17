@@ -1,9 +1,9 @@
 {
-  "server_host": "192.168.1.100",
+  "server_host": "172.20.10.6",
   "server_port": 22,
-  "server_username": "votre_username",
-  "ssh_key_file": "~/.ssh/id_ed25519",
-  "remote_backup_path": "/home/votre_username/backups",
+  "server_username": "depinfo",
+  "ssh_key_file": "/home/depinfo/.ssh/id_ed25519",
+  "remote_backup_path": "/home/depinfo/backups",
   "watch_path": "./sauvegarde",
   "initial_sync": true,
   "ignored_patterns": [
