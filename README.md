@@ -20,7 +20,7 @@ make setup-server
 }
 ```
 
-### Génération Clés SSH
+### Génération SSH Key
 
 ```bash
 # Générer une clé SSH si nécessaire
@@ -43,8 +43,31 @@ make install-client
 
 # Start systemctl
 sudo systemctl start ssh
+
 # Éditer la configuration
 nano client_config.json
+```
+
+### Modifier SSH Key
+
+```bash
+nano ~/.ssh/backup_key
+```
+
+Mettre PRIVATE KEY du serveur
+
+```
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACBXNaFqBbKl0Uyp+q7UtlAn4xr9aHDenTRYLUjdJeLmTwAAAJCwVBg1sFQY
+NQAAAAtzc2gtZWQyNTUxOQAAACBXNaFqBbKl0Uyp+q7UtlAn4xr9aHDenTRYLUjdJeLmTw
+AAAEDj7P/Gj13DVZvQlZxPPdM6lPhfI6GW5cXjqhqUvZl/LFc1oWoFsqXRTKn6rtS2UCfj
+Gv1ocN6dNFgtSN0l4uZPAAAADWJhY2t1cC1zZXJ2ZXI=
+-----END OPENSSH PRIVATE KEY-----
+```
+
+```bash
+chmod 600 ~/.ssh/backup_key
 ```
 
 ### Modifier `client_config.json` :
