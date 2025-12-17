@@ -3,6 +3,7 @@
 let selectedFile = null;
 
 // Définir la date max à aujourd'hui
+// Définir la date max à aujourd'hui et charger les fichiers
 document.addEventListener('DOMContentLoaded', () => {
     const today = new Date().toISOString().split('T')[0];
     const dateInput = document.getElementById('restore-date');
@@ -10,7 +11,32 @@ document.addEventListener('DOMContentLoaded', () => {
         dateInput.max = today;
         dateInput.value = today;
     }
+    loadFilesForRestore();
 });
+
+async function loadFilesForRestore() {
+    const select = document.getElementById('file-select');
+    try {
+        // On récupère tous les fichiers
+        const data = await apiCall('/api/files');
+        const files = data.files || [];
+
+        if (files.length === 0) {
+            select.innerHTML = '<option value="">Aucun fichier disponible</option>';
+            return;
+        }
+
+        const options = files.map(file => {
+            return `<option value="${escapeHtml(file.path)}">${escapeHtml(cleanPath(file.path))}</option>`;
+        }).join('');
+
+        select.innerHTML = '<option value="">-- Sélectionner un fichier --</option>' + options;
+
+    } catch (error) {
+        console.error('Error loading files:', error);
+        select.innerHTML = '<option value="">Erreur de chargement</option>';
+    }
+}
 
 // Correction pour date invalide
 function formatDate(timestampStr) {
@@ -41,33 +67,12 @@ function cleanPath(path) {
     return path.replace(/^(\.\/)?sauvegarde\//, '');
 }
 
-async function searchFilesForRestore() {
-    const query = document.getElementById('file-search').value.toLowerCase();
-
-    if (query.length < 2) {
-        document.getElementById('file-results').innerHTML = '';
+async function selectFileForRestore(filePath) {
+    if (!filePath) {
+        document.getElementById('selected-file-versions').style.display = 'none';
         return;
     }
-
-    try {
-        const data = await apiCall(`/api/search?q=${encodeURIComponent(query)}`);
-        const results = data.results;
-
-        const resultsDiv = document.getElementById('file-results');
-        resultsDiv.innerHTML = results.map(filePath => `
-            <div class="search-result-item" onclick="selectFileForRestore('${escapeHtml(filePath)}')">
-                📄 ${escapeHtml(cleanPath(filePath))}
-            </div>
-        `).join('');
-    } catch (error) {
-        console.error('Search error:', error);
-    }
-}
-
-async function selectFileForRestore(filePath) {
     selectedFile = filePath;
-    document.getElementById('file-search').value = cleanPath(filePath); // Affiche le chemin propre
-    document.getElementById('file-results').innerHTML = '';
 
     // Charger les versions
     try {
@@ -87,7 +92,6 @@ async function selectFileForRestore(filePath) {
                     <div class="timeline-content">
                         <div class="timeline-header">
                             <strong>${formatDate(version.timestamp)}</strong>
-                            <span class="version-badge">${version.action}</span>
                         </div>
                         <div class="timeline-details">
                             Taille: ${formatSize(version.size)}

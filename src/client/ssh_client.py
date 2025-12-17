@@ -117,7 +117,14 @@ class SecureSSHClient:
                 logger.error(f"✗ Protocol error: {output} {error_out}")
                 return False
 
+        except FileNotFoundError:
+            logger.info(f"ℹ File vanished before transfer: {relative_path} (likely temporary)")
+            return False
         except Exception as e:
+            # Check if it's an SCP error related to missing file (sometimes wrapped)
+            if "No such file" in str(e):
+                 logger.info(f"ℹ File vanished during transfer: {relative_path}")
+                 return False
             logger.error(f"✗ Error sending {relative_path}: {e}")
             return False
 

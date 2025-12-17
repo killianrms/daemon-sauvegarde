@@ -1,6 +1,6 @@
-
 from watchdog.events import FileSystemEventHandler
 from pathlib import Path
+import fnmatch
 from ..common.utils import get_logger
 
 logger = get_logger(__name__)
@@ -14,11 +14,17 @@ class BackupHandler(FileSystemEventHandler):
         self.ignored_patterns = ignored_patterns or ['.git', '__pycache__', '*.pyc', '*.swp', '*.tmp']
 
     def should_ignore(self, path):
-        """Checks if a file should be ignored"""
-        path_str = str(path)
+        """Checks if a file should be ignored using glob patterns"""
+        path_obj = Path(path)
+        name = path_obj.name
+        
         for pattern in self.ignored_patterns:
-            if pattern in path_str:
+            # Check matches on filename (e.g. *.swp matching file.swp)
+            if fnmatch.fnmatch(name, pattern):
                 return True
+            # Also check if exact pattern exists in string (legacy substring support)
+            # but usually fnmatch is enough.
+            
         return False
 
     def get_relative_path(self, abs_path):

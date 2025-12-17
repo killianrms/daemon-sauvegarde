@@ -82,7 +82,7 @@ function displayFiles(files) {
                     <span class="status status-${statusClass}">${statusText}</span>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="viewVersions('${escapeHtml(file.path)}')">
+                    <button class="btn btn-sm btn-primary" onclick="viewVersions('${encodeURIComponent(file.path)}')">
                         📜 Détails
                     </button>
                     <button class="btn btn-sm btn-danger" onclick="deleteFile('${escapeHtml(file.path)}')">
@@ -94,7 +94,8 @@ function displayFiles(files) {
     }).join('');
 }
 
-async function viewVersions(filePath) {
+async function viewVersions(encodedFilePath) {
+    const filePath = decodeURIComponent(encodedFilePath);
     currentFile = filePath;
 
     try {
@@ -104,10 +105,9 @@ async function viewVersions(filePath) {
 
         document.getElementById('modal-title').textContent = `Versions de: ${displayPath}`;
 
+        const versionsList = document.getElementById('versions-list');
         versionsList.innerHTML = versions.map(version => {
             const actionIcon = version.action === 'deleted' ? '🗑️' : version.action === 'modified' ? '✏️' : '➕';
-            const compressionInfo = version.is_compressed ? '📦 Compressé' : '';
-            const dedupInfo = version.is_deduplicated ? '⚡ Dédupliqué' : '';
 
             const isRestorable = version.size > 0;
             const restoreBtn = isRestorable
@@ -123,8 +123,6 @@ async function viewVersions(filePath) {
                     <div class="version-details">
                         <span>Taille: ${formatSize(version.size)}</span>
                         ${version.compressed_size ? `<span>Stocké: ${formatSize(version.compressed_size)}</span>` : ''}
-                        ${compressionInfo ? `<span class="badge badge-success">${compressionInfo}</span>` : ''}
-                        ${dedupInfo ? `<span class="badge badge-info">${dedupInfo}</span>` : ''}
                     </div>
                     <div class="version-actions">
                         ${restoreBtn}
