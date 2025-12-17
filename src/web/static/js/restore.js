@@ -12,6 +12,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// Correction pour date invalide
+function formatDate(timestampStr) {
+    if (!timestampStr) return 'N/A';
+    try {
+        const parts = timestampStr.split('_');
+        if (parts.length < 2) return timestampStr;
+
+        const datePart = parts[0];
+        const timePart = parts[1].split('-').slice(0, 3).join(':');
+
+        const date = new Date(`${datePart}T${timePart}`);
+
+        return new Intl.DateTimeFormat('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }).format(date);
+    } catch (e) {
+        return timestampStr;
+    }
+}
+
+function cleanPath(path) {
+    return path.replace(/^(\.\/)?sauvegarde\//, '');
+}
+
 async function searchFilesForRestore() {
     const query = document.getElementById('file-search').value.toLowerCase();
 
@@ -27,7 +56,7 @@ async function searchFilesForRestore() {
         const resultsDiv = document.getElementById('file-results');
         resultsDiv.innerHTML = results.map(filePath => `
             <div class="search-result-item" onclick="selectFileForRestore('${escapeHtml(filePath)}')">
-                📄 ${escapeHtml(filePath)}
+                📄 ${escapeHtml(cleanPath(filePath))}
             </div>
         `).join('');
     } catch (error) {
@@ -37,7 +66,7 @@ async function searchFilesForRestore() {
 
 async function selectFileForRestore(filePath) {
     selectedFile = filePath;
-    document.getElementById('file-search').value = filePath;
+    document.getElementById('file-search').value = cleanPath(filePath); // Affiche le chemin propre
     document.getElementById('file-results').innerHTML = '';
 
     // Charger les versions
@@ -47,13 +76,12 @@ async function selectFileForRestore(filePath) {
 
         const timeline = document.getElementById('versions-timeline');
         timeline.innerHTML = versions.map(version => {
-            const date = new Date(version.created_at);
             return `
                 <div class="timeline-item">
                     <div class="timeline-marker"></div>
                     <div class="timeline-content">
                         <div class="timeline-header">
-                            <strong>${date.toLocaleString('fr-FR')}</strong>
+                            <strong>${formatDate(version.timestamp)}</strong>
                             <span class="version-badge">${version.action}</span>
                         </div>
                         <div class="timeline-details">
