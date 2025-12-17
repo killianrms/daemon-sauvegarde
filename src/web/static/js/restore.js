@@ -76,6 +76,11 @@ async function selectFileForRestore(filePath) {
 
         const timeline = document.getElementById('versions-timeline');
         timeline.innerHTML = versions.map(version => {
+            const isRestorable = version.size > 0;
+            const restoreBtn = isRestorable
+                ? `<button class="btn btn-sm btn-primary" onclick="restoreFileVersion('${escapeHtml(filePath)}', '${version.timestamp}')">🔄 Restaurer cette version</button>`
+                : `<button class="btn btn-sm btn-secondary" disabled title="Fichier vide">🚫 Vide</button>`;
+
             return `
                 <div class="timeline-item">
                     <div class="timeline-marker"></div>
@@ -89,9 +94,7 @@ async function selectFileForRestore(filePath) {
                             ${version.is_compressed ? ' • 📦 Compressé' : ''}
                             ${version.is_deduplicated ? ' • ⚡ Dédupliqué' : ''}
                         </div>
-                        <button class="btn btn-sm btn-primary" onclick="restoreFileVersion('${escapeHtml(filePath)}', '${version.timestamp}')">
-                            🔄 Restaurer cette version
-                        </button>
+                        ${restoreBtn}
                     </div>
                 </div>
             `;

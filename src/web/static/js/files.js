@@ -104,11 +104,15 @@ async function viewVersions(filePath) {
 
         document.getElementById('modal-title').textContent = `Versions de: ${displayPath}`;
 
-        const versionsList = document.getElementById('versions-list');
         versionsList.innerHTML = versions.map(version => {
             const actionIcon = version.action === 'deleted' ? '🗑️' : version.action === 'modified' ? '✏️' : '➕';
             const compressionInfo = version.is_compressed ? '📦 Compressé' : '';
             const dedupInfo = version.is_deduplicated ? '⚡ Dédupliqué' : '';
+
+            const isRestorable = version.size > 0;
+            const restoreBtn = isRestorable
+                ? `<button class="btn btn-sm btn-success" onclick="restoreFile('${escapeHtml(filePath)}', '${version.timestamp}')">🔄 Restaurer</button>`
+                : `<button class="btn btn-sm btn-secondary" disabled title="Fichier vide">🚫 Vide</button>`;
 
             return `
                 <div class="version-item">
@@ -123,9 +127,7 @@ async function viewVersions(filePath) {
                         ${dedupInfo ? `<span class="badge badge-info">${dedupInfo}</span>` : ''}
                     </div>
                     <div class="version-actions">
-                        <button class="btn btn-sm btn-success" onclick="restoreFile('${escapeHtml(filePath)}', '${version.timestamp}')">
-                            🔄 Restaurer
-                        </button>
+                        ${restoreBtn}
                         <button class="btn btn-sm btn-danger" onclick="deleteVersion('${escapeHtml(filePath)}', '${version.timestamp}')">
                             🗑️ Supprimer cette version
                         </button>
