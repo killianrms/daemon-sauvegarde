@@ -246,6 +246,34 @@ def api_restore():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/delete', methods=['POST'])
+@auth.login_required
+def api_delete():
+    """Supprime un fichier ou une version"""
+    try:
+        data = request.json
+        file_path = data.get('file_path')
+        timestamp = data.get('timestamp')
+        delete_all = data.get('delete_all', False)
+
+        if not file_path:
+            return jsonify({'success': False, 'error': 'Missing file_path'}), 400
+
+        if delete_all:
+            success = version_manager.delete_file_history(file_path)
+        elif timestamp:
+            success = version_manager.delete_specific_version(file_path, timestamp)
+        else:
+            return jsonify({'success': False, 'error': 'Missing timestamp or delete_all flag'}), 400
+
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Delete failed'}), 500
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/download/<path:file_path>')
 @auth.login_required
 def api_download(file_path):

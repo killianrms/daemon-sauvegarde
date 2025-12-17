@@ -407,6 +407,105 @@ class VersionManager:
             print(f"✗ Erreur lors de la suppression: {e}")
             return False
 
+    def delete_specific_version(self, file_path, timestamp):
+        """Supprime une version spécifique d'un fichier"""
+        try:
+            conn = sqlite3.connect(self.metadata_db)
+            cursor = conn.cursor()
+
+            # Récupérer les infos de la version
+            cursor.execute('''
+                SELECT version_path, is_deduplicated, dedup_ref 
+                FROM file_versions 
+                WHERE file_path = ? AND version_timestamp = ?
+            ''', (file_path, timestamp))
+            result = cursor.fetchone()
+
+            if not result:
+                conn.close()
+                return False
+
+            version_path_str, is_deduplicated, dedup_ref = result
+            
+            # Gestion de la suppression physique
+            if is_deduplicated and dedup_ref:
+                # Décrémenter le ref_count dans dedup_store
+                cursor.execute('UPDATE dedup_store SET ref_count = ref_count - 1 WHERE dedup_path = ?', (dedup_ref,))
+                # Si ref_count tombe à 0, on pourrait supprimer le fichier dédupliqué, 
+                # mais par prudence (et simplicité), on le garde ou on le nettoiera via un GC plus tard.
+                # Pour l'instant, on laisse le fichier physique.
+                pass
+            else:
+                # Suppression directe du fichier versionné
+                full_path = self.backup_root / version_path_str
+                if full_path.exists():
+                    # Si c'est un dossier (ancienne structure), rmtree
+                    if full_path.is_dir():
+                        shutil.rmtree(full_path)
+                    else:
+                        full_path.unlink()
+                    
+                    # Nettoyer le dossier parent s'il est vide (timestamp dir)
+                    parent = full_path.parent
+                    if parent != self.versions_dir and not any(parent.iterdir()):
+                        shutil.rmtree(parent)
+
+            # Suppression de l'entrée en base
+            cursor.execute('''
+                DELETE FROM file_versions 
+                WHERE file_path = ? AND version_timestamp = ?
+            ''', (file_path, timestamp))
+            
+            conn.commit()
+            conn.close()
+            print(f"✓ Version supprimée: {file_path} ({timestamp})")
+            return True
+
+        except Exception as e:
+            print(f"✗ Erreur lors de la suppression de version: {e}")
+            return False
+
+    def delete_file_history(self, file_path):
+        """Supprime tout l'historique d'un fichier ainsi que sa copie actuelle"""
+        try:
+            conn = sqlite3.connect(self.metadata_db)
+            cursor = conn.cursor()
+
+            # 1. Supprimer le fichier 'current'
+            current_file = self.current_dir / file_path
+            if current_file.exists():
+                current_file.unlink()
+                # Nettoyer dossiers parents vides
+                parent = current_file.parent
+                while parent != self.current_dir:
+                    if not any(parent.iterdir()):
+                        parent.rmdir()
+                        parent = parent.parent
+                    else:
+                        break
+
+            # 2. Récupérer toutes les versions pour suppression physique
+            cursor.execute('''
+                SELECT version_path, is_deduplicated, dedup_ref, version_timestamp
+                FROM file_versions 
+                WHERE file_path = ?
+            ''', (file_path,))
+            versions = cursor.fetchall()
+
+            count = 0
+            for v_path, is_dedup, dedup_ref, ts in versions:
+                success = self.delete_specific_version(file_path, ts)
+                if success:
+                    count += 1
+
+            conn.close()
+            print(f"✓ Historique supprimé pour {file_path} ({count} versions)")
+            return True
+
+        except Exception as e:
+            print(f"✗ Erreur lors de la suppression de l'historique: {e}")
+            return False
+
     def cleanup_old_versions(self, retention_days=30):
         """Nettoie les versions plus anciennes que retention_days"""
         cutoff_date = datetime.now() - timedelta(days=retention_days)

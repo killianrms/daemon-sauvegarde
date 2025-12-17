@@ -23,6 +23,38 @@ async function loadFiles() {
     }
 }
 
+// Correction pour date invalide
+function formatDate(timestampStr) {
+    if (!timestampStr) return 'N/A';
+    // Le format timestampStr est "YYYY-MM-DD_HH-MM-SS-ffffff"
+    // On doit le transformer en format lisible par Date() ou le parser manuellement
+    try {
+        const parts = timestampStr.split('_');
+        if (parts.length < 2) return timestampStr;
+
+        const datePart = parts[0]; // YYYY-MM-DD
+        const timePart = parts[1].split('-').slice(0, 3).join(':'); // HH:MM:SS
+
+        const date = new Date(`${datePart}T${timePart}`);
+
+        return new Intl.DateTimeFormat('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }).format(date);
+    } catch (e) {
+        return timestampStr;
+    }
+}
+
+function cleanPath(path) {
+    // Retire ./sauvegarde/ ou sauvegarde/ du début
+    return path.replace(/^(\.\/)?sauvegarde\//, '');
+}
+
 function displayFiles(files) {
     const tbody = document.getElementById('files-list');
 
@@ -34,11 +66,12 @@ function displayFiles(files) {
     tbody.innerHTML = files.map(file => {
         const statusClass = file.last_action === 'deleted' ? 'danger' : 'success';
         const statusText = file.last_action === 'deleted' ? '🗑️ Supprimé' : '✓ Actif';
+        const displayPath = cleanPath(file.path);
 
         return `
             <tr>
                 <td>
-                    <strong>${escapeHtml(file.path)}</strong>
+                    <strong>${escapeHtml(displayPath)}</strong>
                 </td>
                 <td>${formatDate(file.last_modified)}</td>
                 <td>
@@ -50,7 +83,10 @@ function displayFiles(files) {
                 </td>
                 <td>
                     <button class="btn btn-sm btn-primary" onclick="viewVersions('${escapeHtml(file.path)}')">
-                        📜 Voir versions
+                        📜 Détails
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteFile('${escapeHtml(file.path)}')">
+                        🗑️ Tout supprimer
                     </button>
                 </td>
             </tr>
@@ -64,8 +100,9 @@ async function viewVersions(filePath) {
     try {
         const data = await apiCall(`/api/files/${encodeURIComponent(filePath)}/versions`);
         const versions = data.versions;
+        const displayPath = cleanPath(filePath);
 
-        document.getElementById('modal-title').textContent = `Versions de: ${filePath}`;
+        document.getElementById('modal-title').textContent = `Versions de: ${displayPath}`;
 
         const versionsList = document.getElementById('versions-list');
         versionsList.innerHTML = versions.map(version => {
@@ -81,13 +118,16 @@ async function viewVersions(filePath) {
                     </div>
                     <div class="version-details">
                         <span>Taille: ${formatSize(version.size)}</span>
-                        ${version.compressed_size ? `<span>Compressé: ${formatSize(version.compressed_size)}</span>` : ''}
+                        ${version.compressed_size ? `<span>Stocké: ${formatSize(version.compressed_size)}</span>` : ''}
                         ${compressionInfo ? `<span class="badge badge-success">${compressionInfo}</span>` : ''}
                         ${dedupInfo ? `<span class="badge badge-info">${dedupInfo}</span>` : ''}
                     </div>
                     <div class="version-actions">
                         <button class="btn btn-sm btn-success" onclick="restoreFile('${escapeHtml(filePath)}', '${version.timestamp}')">
                             🔄 Restaurer
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteVersion('${escapeHtml(filePath)}', '${version.timestamp}')">
+                            🗑️ Supprimer cette version
                         </button>
                     </div>
                 </div>
@@ -100,8 +140,53 @@ async function viewVersions(filePath) {
     }
 }
 
+async function deleteFile(filePath) {
+    if (!confirm(`Etes-vous sûr de vouloir supprimer TOUT l'historique de "${cleanPath(filePath)}" ?\nCette action est irréversible.`)) {
+        return;
+    }
+
+    try {
+        await apiCall('/api/delete', {
+            method: 'POST',
+            body: JSON.stringify({
+                file_path: filePath,
+                delete_all: true
+            })
+        });
+
+        showNotification('Fichier et historique supprimés !', 'success');
+        loadFiles(); // Recharger la liste
+    } catch (error) {
+        console.error('Delete error:', error);
+        showNotification('Erreur lors de la suppression: ' + error.message, 'error');
+    }
+}
+
+async function deleteVersion(filePath, timestamp) {
+    if (!confirm('Voulez-vous vraiment supprimer cette version ?')) {
+        return;
+    }
+
+    try {
+        await apiCall('/api/delete', {
+            method: 'POST',
+            body: JSON.stringify({
+                file_path: filePath,
+                timestamp: timestamp
+            })
+        });
+
+        showNotification('Version supprimée !', 'success');
+        viewVersions(filePath); // Rafraîchir la liste des versions
+        loadFiles(); // Rafraîchir aussi la liste principale (compteurs)
+    } catch (error) {
+        console.error('Delete version error:', error);
+        showNotification('Erreur suppression version: ' + error.message, 'error');
+    }
+}
+
 async function restoreFile(filePath, timestamp) {
-    if (!confirm(`Voulez-vous restaurer cette version de "${filePath}" ?`)) {
+    if (!confirm(`Voulez-vous restaurer cette version de "${cleanPath(filePath)}" ?`)) {
         return;
     }
 
@@ -161,7 +246,7 @@ function escapeHtml(text) {
 }
 
 // Fermer le modal en cliquant en dehors
-window.onclick = function(event) {
+window.onclick = function (event) {
     const modal = document.getElementById('versions-modal');
     if (event.target === modal) {
         closeModal();
