@@ -46,13 +46,9 @@ make web-start
 
 ### Install Dépendence
 
-
-# Installer
+```bash
 make install-client
-
-# Éditer la configuration
-nano client_config.json
-
+```
 
 ### Modifier SSH Key
 
@@ -83,6 +79,10 @@ cat ~/.ssh/backup_server_key
 ```
 
 ### Modifier `client_config.json` :
+
+```bash
+nano client_config.json
+```
 
 ```json lines
 {
