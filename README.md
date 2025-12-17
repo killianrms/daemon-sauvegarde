@@ -70,6 +70,12 @@ Gv1ocN6dNFgtSN0l4uZPAAAADWJhY2t1cC1zZXJ2ZXI=
 chmod 600 ~/.ssh/backup_key
 ```
 
+A envoyer au serveur
+
+```bash
+cat ~/.ssh/backup_server_key
+```
+
 ### Modifier `client_config.json` :
 
 ```json lines
