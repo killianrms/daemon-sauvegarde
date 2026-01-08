@@ -22,15 +22,15 @@ help: ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 
-check-deps: ## Vérifie les dépendances système
+check-deps:
 	@echo "$(BLUE)Vérification des dépendances...$(NC)"
 	@command -v $(SYSTEM_PYTHON) >/dev/null 2>&1 || { echo "$(RED)Python3 n'est pas installé$(NC)"; exit 1; }
 	@command -v ssh >/dev/null 2>&1 || { echo "$(RED)SSH n'est pas installé$(NC)"; exit 1; }
 	@echo "$(GREEN)✓ Dépendances système OK$(NC)"
 
-install: install-venv ## Installe les dépendances Python (client et serveur)
+install: install-venv
 
-install-venv: check-deps ## Installe dans un environnement virtuel
+install-venv: check-deps
 	@echo "$(BLUE)Création de l'environnement virtuel...$(NC)"
 	@$(SYSTEM_PYTHON) -m venv $(VENV)
 	@echo "$(BLUE)Installation des dépendances...$(NC)"
@@ -79,7 +79,7 @@ start-client: ## Démarre le daemon client
 	fi
 	@$(PYTHON) src/client/daemon.py
 
-start-client-bg: ## Démarre le client en arrière-plan
+start-client-bg:
 	@echo "$(BLUE)Démarrage du client en arrière-plan...$(NC)"
 	@if [ ! -d sauvegarde ]; then \
 		mkdir -p sauvegarde; \
@@ -89,7 +89,7 @@ start-client-bg: ## Démarre le client en arrière-plan
 	@echo "$(GREEN)✓ Client démarré (PID: $$(cat $(CLIENT_PID_FILE)))$(NC)"
 	@echo "$(YELLOW)Logs: tail -f backup_client.log$(NC)"
 
-stop-client: ## Arrête le daemon client en arrière-plan
+stop-client:
 	@if [ -f $(CLIENT_PID_FILE) ]; then \
 		PID=$$(cat $(CLIENT_PID_FILE)); \
 		if ps -p $$PID > /dev/null; then \
@@ -105,7 +105,7 @@ stop-client: ## Arrête le daemon client en arrière-plan
 		echo "$(YELLOW)Aucun client en arrière-plan détecté$(NC)"; \
 	fi
 
-status-client: ## Affiche le statut du client
+status-client:
 	@if [ -f $(CLIENT_PID_FILE) ]; then \
 		PID=$$(cat $(CLIENT_PID_FILE)); \
 		if ps -p $$PID > /dev/null; then \
@@ -117,17 +117,17 @@ status-client: ## Affiche le statut du client
 		echo "$(YELLOW)Client non démarré$(NC)"; \
 	fi
 
-logs: ## Affiche les logs du client
+logs:
 	@if [ -f backup_client.log ]; then \
 		tail -f backup_client.log; \
 	else \
 		echo "$(YELLOW)Aucun fichier de log trouvé$(NC)"; \
 	fi
 
-logs-server: ## Affiche les logs SSH du serveur
+logs-server:
 	@$(PYTHON) src/server/manager.py logs
 
-test-connection: ## Teste la connexion SSH au serveur
+test-connection:
 	@echo "$(BLUE)Test de connexion au serveur...$(NC)"
 	@SERVER_HOST=$$(python3 -c "import json; print(json.load(open('client_config.json'))['server_host'])"); \
 	SERVER_USER=$$(python3 -c "import json; print(json.load(open('client_config.json'))['server_username'])"); \
@@ -145,20 +145,20 @@ clean: ## Nettoie les fichiers temporaires
 	@rm -f *.swp *.swo
 	@echo "$(GREEN)✓ Nettoyage terminé$(NC)"
 
-clean-all: clean ## Nettoie tout (inclus venv)
+clean-all: clean
 	@echo "$(BLUE)Nettoyage complet...$(NC)"
 	@rm -rf $(VENV)
 	@echo "$(GREEN)✓ Nettoyage complet terminé$(NC)"
 
-uninstall: clean-all ## Désinstalle complètement
+uninstall: clean-all
 	@echo "$(BLUE)Désinstallation...$(NC)"
 	@$(PIP) uninstall -y watchdog paramiko scp 2>/dev/null || true
 	@echo "$(GREEN)✓ Désinstallation terminée$(NC)"
 
-info-server: ## Affiche les informations du serveur
+info-server:
 	@$(PYTHON) src/server/manager.py info
 
-info-client: ## Affiche la configuration du client
+info-client:
 	@echo "$(BLUE)Configuration du client:$(NC)"
 	@if [ -f client_config.json ]; then \
 		cat client_config.json; \
@@ -172,13 +172,13 @@ backup-test: ## Crée un fichier de test dans sauvegarde/
 	@echo "Test de sauvegarde - $$(date)" > sauvegarde/test_$$(date +%s).txt
 	@echo "$(GREEN)✓ Fichier de test créé dans sauvegarde/$(NC)"
 
-watch-backup: ## Surveille le dossier de sauvegarde en temps réel
+watch-backup:
 	@echo "$(BLUE)Surveillance du dossier sauvegarde/$(NC)"
 	@watch -n 1 "ls -lah sauvegarde/"
 
 # === Gestion des versions et restauration ===
 
-restore-interactive: ## Mode interactif de restauration (serveur)
+restore-interactive:
 	@echo "$(BLUE)Lancement de la restauration interactive...$(NC)"
 	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
 	if [ -z "$$BACKUP_PATH" ]; then \
@@ -197,7 +197,7 @@ restore: ## Restaure un fichier spécifique (usage: make restore FILE=path/to/fi
 	fi; \
 	$(PYTHON) src/server/restore.py "$$BACKUP_PATH" --file "$(FILE)" --version "$(VERSION)"
 
-restore-date: ## Restaure tous les fichiers à une date (usage: make restore-date DATE=2025-01-15)
+restore-date:
 	@if [ -z "$(DATE)" ]; then \
 		echo "$(RED)Usage: make restore-date DATE=YYYY-MM-DD$(NC)"; \
 		exit 1; \
@@ -219,7 +219,7 @@ list-versions: ## Liste toutes les versions disponibles (optionnel: FILE=path/to
 		$(PYTHON) src/server/restore.py "$$BACKUP_PATH" --list; \
 	fi
 
-cleanup: ## Nettoie les versions > 30 jours (serveur)
+cleanup:
 	@echo "$(BLUE)Nettoyage des anciennes versions...$(NC)"
 	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
 	if [ -z "$$BACKUP_PATH" ]; then \
@@ -227,7 +227,7 @@ cleanup: ## Nettoie les versions > 30 jours (serveur)
 	fi; \
 	$(PYTHON) src/server/cleanup.py "$$BACKUP_PATH"
 
-cleanup-dry-run: ## Simule le nettoyage sans supprimer (serveur)
+cleanup-dry-run:
 	@echo "$(BLUE)Simulation du nettoyage...$(NC)"
 	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
 	if [ -z "$$BACKUP_PATH" ]; then \
@@ -235,7 +235,7 @@ cleanup-dry-run: ## Simule le nettoyage sans supprimer (serveur)
 	fi; \
 	$(PYTHON) src/server/cleanup.py "$$BACKUP_PATH" --dry-run
 
-cleanup-custom: ## Nettoie avec rétention personnalisée (usage: make cleanup-custom RETENTION=60)
+cleanup-custom:
 	@if [ -z "$(RETENTION)" ]; then \
 		echo "$(RED)Usage: make cleanup-custom RETENTION=days$(NC)"; \
 		exit 1; \
@@ -246,14 +246,14 @@ cleanup-custom: ## Nettoie avec rétention personnalisée (usage: make cleanup-c
 	fi; \
 	$(PYTHON) src/server/cleanup.py "$$BACKUP_PATH" --retention $(RETENTION)
 
-stats: ## Affiche les statistiques des sauvegardes (serveur)
+stats:
 	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
 	if [ -z "$$BACKUP_PATH" ]; then \
 		BACKUP_PATH="$(HOME)/backups"; \
 	fi; \
 	$(PYTHON) src/server/cleanup.py "$$BACKUP_PATH" --stats
 
-setup-cron: ## Configure le nettoyage automatique avec cron (serveur)
+setup-cron:
 	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
 	if [ -z "$$BACKUP_PATH" ]; then \
 		BACKUP_PATH="$(HOME)/backups"; \
@@ -262,10 +262,10 @@ setup-cron: ## Configure le nettoyage automatique avec cron (serveur)
 
 
 # Alias communs
-run-client: start-client ## Alias pour start-client
-run-server: start-server ## Alias pour start-server
+run-client: start-client
+run-server: start-server
 
-health-check: ## Health check complet du système (serveur)
+health-check:
 	@echo "$(BLUE)Health Check du système...$(NC)"
 	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
 	if [ -z "$$BACKUP_PATH" ]; then \
@@ -275,7 +275,7 @@ health-check: ## Health check complet du système (serveur)
 
 # === Démarrage Automatique ===
 
-install-service: ## Installe le service systemd (Linux uniquement)
+install-service:
 	@echo "$(BLUE)Installation du service systemd...$(NC)"
 	@if [ ! -f backup-client.service ]; then \
 		echo "$(RED)Erreur: backup-client.service introuvable$(NC)"; \
@@ -288,26 +288,26 @@ install-service: ## Installe le service systemd (Linux uniquement)
 	@echo "$(GREEN)✓ Service installé$(NC)"
 	@echo "$(YELLOW)Activez-le avec: make enable-service$(NC)"
 
-enable-service: ## Active le démarrage automatique au boot
+enable-service:
 	@echo "$(BLUE)Activation du démarrage automatique...$(NC)"
 	@sudo systemctl enable backup-client.service
 	@sudo systemctl start backup-client.service
 	@echo "$(GREEN)✓ Service activé et démarré$(NC)"
 	@echo "$(YELLOW)Le daemon se lancera automatiquement au démarrage$(NC)"
 
-disable-service: ## Désactive le démarrage automatique
+disable-service:
 	@echo "$(BLUE)Désactivation du service...$(NC)"
 	@sudo systemctl stop backup-client.service
 	@sudo systemctl disable backup-client.service
 	@echo "$(GREEN)✓ Service désactivé$(NC)"
 
-status-service: ## Affiche le statut du service systemd
+status-service:
 	@sudo systemctl status backup-client.service
 
-restart-service: ## Redémarre le service
+restart-service:
 	@echo "$(BLUE)Redémarrage du service...$(NC)"
 	@sudo systemctl restart backup-client.service
 	@echo "$(GREEN)✓ Service redémarré$(NC)"
 
-logs-service: ## Affiche les logs du service systemd
+logs-service:
 	@sudo journalctl -u backup-client.service -f

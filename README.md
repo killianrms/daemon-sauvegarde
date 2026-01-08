@@ -1,106 +1,87 @@
-# 🛡️ Daemon Sauvegarde (Omega Edition)
+# 🛡️ Daemon de Sauvegarde - Guide de Présentation
 
-A secure, high-performance, enterprise-grade backup solution written in Python.
+Ce projet permet de sauvegarder automatiquement et de manière chiffrée les fichiers d'un client vers un serveur.
 
-## 🌟 Key Features
+## 📋 Prérequis
 
-### 🚀 High Performance
-- **True Delta Sync**: Uses rolling hash signatures to transfer only changed blocks (rsync-like algorithm).
-- **Persistent Agent**: Single SSH connection handling multiple RPC commands (Eliminates connection overhead).
-- **Deduplication**: Block-level deduplication to save storage space.
-- **Smart Compression**: Automatic GZIP compression for compressible file types.
+- **Serveur** : Machine qui stocke les sauvegardes.
+- **Client** : Machine utilisateur à sauvegarder.
 
-### 🔒 Military-Grade Security
-- **AES-256-GCM Encryption**: Authenticated encryption for all stored files.
-- **Secure Key Derivation**: PBKDF2 with SHA-256 and **Random Salt** (preventing Rainbow Tables).
-- **Path Sanitization**: Strict validation of all file paths to prevent directory traversal attacks.
-- **Privilege Separation**: Client run as user, Agent runs restricted to backup scope.
+---
 
-### 📊 Observability
-- **CLI Dashboard**: Real-time status via `src/client/status.py`.
-- **Web Interface**: Flask-based UI for browsing versions and restoring files.
-- **Garbage Collection**: Automated cleanup of orphaned deduplication blocks.
+## 🖥️ 1. Côté Serveur (Machine de Stockage)
 
-## 🏗️ Architecture
+Ouvrez un terminal et lancez ces commandes :
 
-```mermaid
-graph LR
-    Client[Client Daemon] -- SSH Tunnel --> Agent[Server Agent]
-    Agent --> VM[Version Manager]
-    VM --> DB[(SQLite Meta)]
-    VM --> Store[(Encrypted Storage)]
-    
-    Status[CLI Status] -- SSH --> Agent
-    Web[Web UI] --> VM
-```
-
-## 🛠️ Installation
-
-### Prerequisites
-- Python 3.8+
-- SSH Access to Server
-
-### Client Setup
-1.  Clone the repository:
+1.  **Installation**
     ```bash
-    git clone https://github.com/depinfo/daemon-sauvegarde.git
-    cd daemon-sauvegarde
+    make install-server
     ```
-2.  Install dependencies:
+
+2.  **Configuration Initiale** (Génération des clés, dossiers...)
     ```bash
-    pip install -r requirements.txt
+    make setup-server
     ```
-3.  Configure `client_config.json`:
-    ```json
-    {
-        "server_host": "192.168.1.10",
-        "server_username": "backup",
-        "ssh_key_file": "~/.ssh/id_rsa",
-        "remote_backup_path": "~/backups",
-        "watch_path": "./my_data"
-    }
-    ```
-4.  Install Systemd Service:
+
+3.  **Démarrer le Service**
     ```bash
-    sudo cp daemon-sauvegarde-client.service /etc/systemd/system/
-    sudo systemctl enable --now daemon-sauvegarde-client
+    make start-server
     ```
+    > ℹ️ **Notez l'adresse IP et le port** qui s'affichent, vous en aurez besoin pour le client.
 
-### Server Setup
-1.  Ensure Python 3 is installed.
-2.  Enable the Agent:
-    The client automatically deploys/runs `src/server/agent.py` via SSH. No manual daemon required on server-side.
-3.  (Optional) Web Interface:
+---
+
+## 💻 2. Côté Client (Machine Utilisateur)
+
+Ouvrez un terminal sur la machine à sauvegarder :
+
+1.  **Installation**
     ```bash
-    sudo cp daemon-sauvegarde-web.service /etc/systemd/system/
-    sudo systemctl enable --now daemon-sauvegarde-web
+    make install-client
     ```
 
-## 💻 Usage
+2.  **Configuration**
+    Ouvrez le fichier de configuration :
+    ```bash
+    nano client_config.json
+    ```
+    - Remplacez `server_host` par l'**IP du serveur**.
+    - Vérifiez que `server_username` est correct (ex: `depinfo` ou votre utilisateur).
 
-### Check Status
-```bash
-python3 src/client/status.py
-```
-Output:
-```text
-=== 📊 Backup System Status ===
-Files Tracked:    15,420
-Disk Usage:       4.2 GB
-Dedup Ratio:      1.45x
-```
+3.  **Démarrer la Surveillance**
+    ```bash
+    make start-client
+    ```
+    > Un dossier `sauvegarde/` sera créé automatiquement.
 
-### Manual Cleanup
-Run the Garbage Collector to free space:
-```bash
-python3 src/server/gc.py
-```
+---
 
-## 🧪 Testing
-Run the test suite:
-```bash
-pytest tests/
-```
+## 🚀 3. Démonstration (Le Test)
 
-## 📜 License
-Private - Dept Info.
+1.  Laissez tourner le client (`make start-client`) dans un terminal.
+2.  Ouvrez un **nouveau terminal**.
+3.  Lancez le test automatique :
+    ```bash
+    make backup-test
+    ```
+    - Un fichier test est créé dans `sauvegarde/`.
+    - Il est détecté, chiffré et envoyé au serveur.
+    - Il disparaît du dossier `sauvegarde/` (preuve de succès).
+
+4.  Vérifiez sur le **Serveur** que le fichier est bien reçu :
+    ```bash
+    make list-versions
+    ```
+
+---
+
+## 🛠️ Commandes Utiles
+
+| Commande | Description |
+| :--- | :--- |
+| `make help` | Affiche la liste des commandes |
+| `make start-server` | Lance le serveur SSH |
+| `make start-client` | Lance le daemon de surveillance |
+| `make backup-test` | Simule une sauvegarde (crée un fichier) |
+| `make restore` | Restaure un fichier (suivre instructions) |
+| `make clean` | Nettoie les fichiers temporaires |
