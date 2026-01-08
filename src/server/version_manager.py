@@ -17,15 +17,7 @@ from pathlib import Path
 import hashlib
 
 
-try:
-    from .cleanup import *
-except ImportError:
-    # Fallback/Direct execution
-    # If running as script, 'cleanup' might be in same dir
-    try:
-        from cleanup import *
-    except ImportError:
-         print("Warning: Could not import cleanup module")
+
 import hashlib
 # ... (preserve other imports)
 

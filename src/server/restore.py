@@ -9,7 +9,18 @@ import shutil
 import argparse
 from datetime import datetime
 from pathlib import Path
-from version_manager import VersionManager
+try:
+    from .version_manager import VersionManager
+except ImportError:
+    # Direct execution fallback
+    # If running as script, 'version_manager' might be in same dir
+    try:
+        from version_manager import VersionManager
+    except ImportError:
+         # Last resort: try finding it relative to this file
+         import sys
+         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+         from version_manager import VersionManager
 
 class RestoreManager:
     """Gestionnaire de restauration de fichiers"""
