@@ -7,13 +7,10 @@ Système de sauvegarde automatique et sécurisé avec **gestion de versions** po
 
 ### 1. Installation et Configuration
 ```bash
-# Installer les dépendances (crée un environnement virtuel)
 make install-server
 
-# Démarrer le service SSH (Crucial !)
 sudo systemctl enable --now ssh
 
-# Configurer le serveur (Génération de clés, dossiers...)
 make setup-server
 ```
 
@@ -30,7 +27,6 @@ Le fichier est généré automatiquement, mais vous pouvez le modifier :
 ### Génération Clés SSH
 
 ```bash
-# Éditer le fichier
 nano ~/.ssh/authorized_keys
 # Coller la clé publique du client sur une nouvelle ligne
 ```
@@ -86,13 +82,13 @@ nano client_config.json
 
 ```json lines
 {
-  "server_host": "172.20.10.6",                       // IP du serveur
-  "server_port": 22,                                  // Port serveur
-  "server_username": "depinfo",                       // Name du serveur
-  "ssh_key_file": "/home/depinfo/.ssh/id_ed25519",    // Fichier ssh fourni par le serveur
-  "remote_backup_path": "/home/depinfo/backups",      // Emplacement dans le serveur, fourni par le serveur
-  "watch_path": "./sauvegarde",                       // Fichier dans le projet où l'on va mettre les fichiers
-  "initial_sync": true,                               // syncro initialzea
+  "server_host": "172.20.10.6",                       
+  "server_port": 22,                                  
+  "server_username": "depinfo",                       
+  "ssh_key_file": "/home/depinfo/.ssh/id_ed25519",    
+  "remote_backup_path": "/home/depinfo/backups",      
+  "watch_path": "./sauvegarde",                       
+  "initial_sync": true,                               
   "ignored_patterns": [
     ".git",
     "__pycache__",
