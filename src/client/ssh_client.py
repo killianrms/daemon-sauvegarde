@@ -1,11 +1,10 @@
 
 import os
 import paramiko
-from scp import SCPClient
 import logging
-import random
-import string
 import shlex
+import json
+import base64
 from ..common.utils import get_logger
 
 logger = get_logger(__name__)
@@ -20,14 +19,16 @@ class SecureSSHClient:
         self.key_file = config.get('ssh_key_file')
         self.remote_path = config.get('remote_backup_path')
         self.ssh_client = None
+        self.agent_stdin = None
+        self.agent_stdout = None
+        self.agent_channel = None
 
     def connect(self):
-        """Establishes a secure SSH connection"""
+        """Establishes a secure SSH connection and starts the agent"""
         try:
             self.ssh_client = paramiko.SSHClient()
             self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            # Connect with SSH key
             self.ssh_client.connect(
                 hostname=self.host,
                 port=self.port,
@@ -36,10 +37,81 @@ class SecureSSHClient:
                 timeout=10
             )
             logger.info(f"SSH connection established with {self.host}:{self.port}")
-            return True
+            
+            # Start persistent agent
+            return self.start_agent()
+            
         except Exception as e:
             logger.error(f"SSH connection error: {e}")
             return False
+
+    def start_agent(self):
+        """Starts the remote agent process"""
+        try:
+            # Locate agent script
+            # Assuming standard layout
+            script_path = os.path.join(os.path.dirname(self.remote_path), 'daemon-sauvegarde', 'src', 'server', 'agent.py')
+            safe_path = shlex.quote(script_path)
+            safe_root = shlex.quote(self.remote_path)
+            
+            cmd = f'python3 {safe_path} {safe_root}'
+            
+            self.agent_stdin, self.agent_stdout, stderr = self.ssh_client.exec_command(cmd)
+            
+            # Read header
+            first_line = self.agent_stdout.readline()
+            if not first_line:
+                error = stderr.read().decode()
+                logger.error(f"Agent failed to start: {error}")
+                return False
+                
+            try:
+                resp = json.loads(first_line)
+                if resp.get('status') == 'ready':
+                    logger.info("✓ Remote Agent ready")
+                    return True
+                else:
+                    logger.error(f"Agent init failed: {resp}")
+                    return False
+            except json.JSONDecodeError:
+                logger.error(f"Invalid agent handshake: {first_line}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to start agent: {e}")
+            return False
+
+    def ensure_connection(self):
+        """Re-establishes connection if dropped"""
+        if self.ssh_client and self.ssh_client.get_transport() and self.ssh_client.get_transport().is_active():
+             if self.agent_stdin and not self.agent_stdin.channel.closed:
+                 return True
+        
+        logger.warning("Connection lost. Reconnecting...")
+        return self.connect()
+
+    def _send_agent_command(self, cmd_dict):
+        """Send a JSON command to the agent and wait for response of same type"""
+        try:
+            if not self.ensure_connection():
+                return None
+                
+            payload = json.dumps(cmd_dict) + '\n'
+            self.agent_stdin.write(payload)
+            self.agent_stdin.flush()
+            
+            response_line = self.agent_stdout.readline()
+            if not response_line:
+                logger.error("Agent closed connection unexpectedly")
+                self.ssh_client.close() # Force reset
+                return None
+                
+            return json.loads(response_line)
+            
+        except Exception as e:
+            logger.error(f"Agent communication error: {e}")
+            self.ssh_client.close()
+            return None
 
     def disconnect(self):
         """Closes the SSH connection"""
@@ -47,115 +119,92 @@ class SecureSSHClient:
             self.ssh_client.close()
             logger.info("SSH connection closed")
 
-    def ensure_connection(self):
-        """Re-establishes connection if dropped"""
-        if not self.ssh_client or not self.ssh_client.get_transport() or not self.ssh_client.get_transport().is_active():
-            return self.connect()
-        return True
-
     def send_file(self, local_file, relative_path):
-        """Sends a file to the server via SCP with versioning"""
+        """Sends a file to the server via Persistant Agent (Delta Sync Optimized)"""
         try:
-            if not self.ensure_connection():
-                return False
-
-            # Create temp dir on server
-            temp_dir = os.path.join(self.remote_path, '.tmp')
-            # Use shlex for remote path too, though it comes from config and is trusted-ish, better safe.
-            # However mkdir -p usually takes straight path.
-            # Using exec_command implies shell execution.
+            from src.common.delta_sync import DeltaSync
+            ds = DeltaSync()
             
-            # SAFE: escaping arguments
-            safe_temp_dir = shlex.quote(temp_dir)
-            stdin, stdout, stderr = self.ssh_client.exec_command(f'mkdir -p {safe_temp_dir}')
-            if stdout.channel.recv_exit_status() != 0:
-                 logger.error(f"Failed to create temp dir: {stderr.read().decode()}")
-                 return False
-
-            # Temp filename
-            temp_name = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-            temp_file = os.path.join(temp_dir, temp_name)
-
-            # SCP transfer
-            with SCPClient(self.ssh_client.get_transport()) as scp:
-                scp.put(local_file, temp_file)
-
-            # Call processing script on server
-            # Assuming process_file.py is in a standard location relative to daemon setup
-            # We might need a better way to locate it, but for now guarding the args is key.
-            # The original code assumed: os.path.join(os.path.dirname(self.remote_path), 'daemon-sauvegarde', 'process_file.py')
-            # This path logic seems a bit fragile but I will preserve it or improve if obviously broken.
-            # I'll stick to preserving the logic but securing the args.
+            # 1. Ask server for signature of existing file
+            sig_cmd = {"cmd": "get_signature", "path": relative_path}
+            sig_resp = self._send_agent_command(sig_cmd)
             
-            start_path = os.path.dirname(self.remote_path) if self.remote_path.endswith('/') else os.path.dirname(self.remote_path + '/')
-            # If remote_path is /home/user/backups, dirname is /home/user
-            # Original code: os.path.dirname(self.remote_path)
+            used_delta = False
             
-
-            script_path = os.path.join(os.path.dirname(self.remote_path), 'daemon-sauvegarde', 'src', 'server', 'process_file.py')
+            if sig_resp and sig_resp.get('status') == 'ok' and sig_resp.get('signature'):
+                 # Server has a previous version
+                 signature = sig_resp['signature']
+                 
+                 # Calculate Delta
+                 # Check if file is too small to bother? (e.g. < 4KB)
+                 local_size = os.path.getsize(local_file)
+                 if local_size > 4096:
+                     try:
+                         delta = ds.generate_delta(local_file, signature)
+                         
+                         # Check efficiency
+                         eff = ds.get_efficiency(local_size, delta)
+                         # If reduction > 10% (avoid overhead for nothing)
+                         if eff['reduction_percent'] > 10:
+                             # Send Delta
+                             cmd = {
+                                 "cmd": "save_delta",
+                                 "path": relative_path,
+                                 "delta": delta
+                             }
+                             resp = self._send_agent_command(cmd)
+                             
+                             if resp and resp.get('status') == 'ok':
+                                 logger.info(f"✓ File synced (Delta: -{eff['reduction_percent']:.1f}%): {relative_path}")
+                                 return True
+                             else:
+                                 logger.warning(f"⚠ Delta sync failed, falling back to full: {resp}")
+                     except Exception as e:
+                         logger.warning(f"⚠ Delta generation error: {e}")
             
-            # SECURE COMMAND CONSTRUCTION
-            cmd = (
-                f'python3 {shlex.quote(script_path)} '
-                f'{shlex.quote(temp_file)} '
-                f'{shlex.quote(relative_path)} '
-                f'{shlex.quote(self.remote_path)}'
-            )
+            # Fallback to Full Send
+            # Read file data
+            with open(local_file, 'rb') as f:
+                data = f.read()
+                
+            # Base64 encode
+            b64_data = base64.b64encode(data).decode()
             
-            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
-            exit_code = stdout.channel.recv_exit_status()
-            output = stdout.read().decode().strip()
-            error_out = stderr.read().decode().strip()
-
-            # Clean up temp file
-            self.ssh_client.exec_command(f'rm -f {shlex.quote(temp_file)}')
-
-            if exit_code == 0:
-                logger.info(f"✓ File sent with version: {relative_path}")
+            cmd = {
+                "cmd": "save_version",
+                "path": relative_path,
+                "data": b64_data
+            }
+            
+            resp = self._send_agent_command(cmd)
+            
+            if resp and resp.get('status') == 'ok':
+                logger.info(f"✓ File sent (Full): {relative_path}")
                 return True
             else:
-                logger.error(f"✗ Protocol error: {output} {error_out}")
+                msg = resp.get('message') if resp else "No response"
+                logger.error(f"✗ Server error for {relative_path}: {msg}")
                 return False
 
         except FileNotFoundError:
-            logger.info(f"ℹ File vanished before transfer: {relative_path} (likely temporary)")
+            logger.info(f"ℹ File vanished: {relative_path}")
             return False
         except Exception as e:
-            # Check if it's an SCP error related to missing file (sometimes wrapped)
-            if "No such file" in str(e):
-                 logger.info(f"ℹ File vanished during transfer: {relative_path}")
-                 return False
             logger.error(f"✗ Error sending {relative_path}: {e}")
             return False
 
     def delete_remote_file(self, relative_path):
         """Marks a file as deleted on the server"""
-        try:
-            if not self.ensure_connection():
-                return False
-
-
-            script_path = os.path.join(os.path.dirname(self.remote_path), 'daemon-sauvegarde', 'src', 'server', 'process_file.py')
-            
-            # SECURE COMMAND
-            cmd = (
-                f'python3 {shlex.quote(script_path)} '
-                f'/dev/null '  # dummy temp file
-                f'{shlex.quote(relative_path)} '
-                f'{shlex.quote(self.remote_path)} '
-                f'deleted'
-            )
-
-            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
-            exit_code = stdout.channel.recv_exit_status()
-
-            if exit_code == 0:
-                logger.info(f"✓ File marked deleted: {relative_path}")
-                return True
-            else:
-                logger.error(f"✗ Error deleting {relative_path}: {stdout.read().decode()}")
-                return False
-
-        except Exception as e:
-            logger.error(f"✗ Error deleting {relative_path}: {e}")
-            return False
+        cmd = {
+            "cmd": "delete_file",
+            "path": relative_path
+        }
+        resp = self._send_agent_command(cmd)
+        
+        if resp and resp.get('status') == 'ok':
+            logger.info(f"✓ File marked deleted: {relative_path}")
+            return True
+        else:
+             msg = resp.get('message') if resp else "No response"
+             logger.error(f"✗ Error deleting {relative_path}: {msg}")
+             return False

@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  backup-server:
+    build: .
+    container_name: backup-server
+    restart: always
+    ports:
+      - "2222:22" # Map host 2222 to container SSH 22
+    volumes:
+      - ./data/backups:/home/backup/backups
+      - ./data/ssh_keys:/home/backup/.ssh
+    environment:
+      - PYTHONUNBUFFERED=1

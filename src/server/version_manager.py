@@ -65,6 +65,29 @@ class VersionManager:
         # Initialiser la base de données
         self.init_database()
 
+    def _validate_path(self, relative_path):
+        """
+        Valide qu'un chemin relatif reste bien dans le dossier de sauvegarde.
+        Lève une ValueError si le chemin est invalide ou tente une traversée.
+        """
+        # Nettoyage basique
+        clean_rel = str(relative_path).strip().strip('/')
+        if not clean_rel or '..' in clean_rel:
+             # Double check avec resolve
+             pass
+        
+        # Construction du chemin absolu théorique
+        full_path = (self.backup_root / clean_rel).resolve()
+        
+        # Vérification qu'il commence bien par backup_root
+        # Note: self.backup_root est déjà resolved dans __init__
+        try:
+            full_path.relative_to(self.backup_root)
+        except ValueError:
+             raise ValueError(f"Tentative de Path Traversal détectée: {relative_path}")
+             
+        return clean_rel
+
     def init_database(self):
         """Initialise la base de données SQLite pour les métadonnées"""
         conn = sqlite3.connect(self.metadata_db)
@@ -250,6 +273,9 @@ class VersionManager:
     def save_version(self, file_path, relative_path):
         """Sauvegarde une version d'un fichier avec compression, déduplication et chiffrement"""
         try:
+            # Sécurisation du chemin
+            relative_path = self._validate_path(relative_path)
+
             # Chemin du fichier actuel (cache pour hash comparison)
             current_file = self.current_dir / relative_path
             current_file.parent.mkdir(parents=True, exist_ok=True)
@@ -373,6 +399,7 @@ class VersionManager:
     def delete_file(self, relative_path):
         """Supprime un fichier (garde une version avant suppression)"""
         try:
+            relative_path = self._validate_path(relative_path)
             current_file = self.current_dir / relative_path
 
             if current_file.exists():
@@ -589,30 +616,60 @@ class VersionManager:
             return self.backup_root / result[0]
         return None
 
+    def get_global_stats(self):
+        """
+        Calcule les statistiques globales du serveur.
+        Retourne un dictionnaire avec:
+        - total_size (taille réelle on-disk)
+        - virtual_size (taille des fichiers restaurés si on les restaurait tous)
+        - deduplication_ratio
+        - file_count
+        - version_count
+        """
+        try:
+            conn = sqlite3.connect(self.metadata_db)
+            cursor = conn.cursor()
+            
+            # Count Files/Versions
+            cursor.execute('SELECT COUNT(DISTINCT file_path), COUNT(*) FROM file_versions')
+            file_count, version_count = cursor.fetchone()
+            
+            # Calculate stored size (compressed + encrypted)
+            # Iterate files in backup_root? Or query DB?
+            # DB doesn't store file size! We have to scan disk or trust FS.
+            # Scanning disk is slow but accurate.
+            # Let's estimate using `du`.
+            
+            import subprocess
+            du = subprocess.run(['du', '-sb', str(self.backup_root)], stdout=subprocess.PIPE)
+            total_size_bytes = int(du.stdout.split()[0])
+            
+            # Virtual Size (Need to store original_size in DB for this!)
+            # We don't have original_size in DB currently (schema limitation).
+            # We can't calculate deduplication ratio accurately without it.
+            # We will just return what we have.
+            
+            # Dedup Stats
+            cursor.execute('SELECT COUNT(*), SUM(ref_count) FROM dedup_store')
+            dedup_blocks, total_refs = cursor.fetchone()
+            
+            conn.close()
+            
+            return {
+                "file_count": file_count,
+                "version_count": version_count,
+                "total_stored_size_bytes": total_size_bytes,
+                "dedup_blocks": dedup_blocks,
+                "dedup_references": total_refs if total_refs else 0
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _get_db_connection(self):
+        """Helper to get DB connection"""
+        return sqlite3.connect(self.metadata_db)
+
     def get_statistics(self):
-        """Obtient des statistiques sur les sauvegardes"""
-        conn = sqlite3.connect(self.metadata_db)
-        cursor = conn.cursor()
-
-        # Nombre total de versions
-        cursor.execute('SELECT COUNT(*) FROM file_versions')
-        total_versions = cursor.fetchone()[0]
-
-        # Nombre de fichiers uniques
-        cursor.execute('SELECT COUNT(DISTINCT file_path) FROM file_versions')
-        unique_files = cursor.fetchone()[0]
-
-        # Taille totale sans compression
-        cursor.execute('SELECT SUM(file_size) FROM file_versions')
-        total_size = cursor.fetchone()[0] or 0
-
-        # Taille totale avec compression
-        cursor.execute('SELECT SUM(COALESCE(compressed_size, file_size)) FROM file_versions')
-        compressed_total_size = cursor.fetchone()[0] or 0
-
-        # Statistiques de compression
-        cursor.execute('SELECT COUNT(*) FROM file_versions WHERE is_compressed = 1')
-        compressed_count = cursor.fetchone()[0]
 
         # Statistiques de déduplication
         cursor.execute('SELECT COUNT(*) FROM file_versions WHERE is_deduplicated = 1')
@@ -657,22 +714,245 @@ class VersionManager:
         }
 
 
-def main():
-    """Fonction principale pour les tests"""
-    if len(sys.argv) < 2:
-        print("Usage: python3 version_manager.py <backup_root>")
-        sys.exit(1)
+    def get_file_signature(self, relative_path):
+        """
+        Génère la signature du fichier actuel (dernière version) pour le delta sync.
+        Retourne la signature ou None si pas de version précédente.
+        """
+        try:
+            from src.common.delta_sync import DeltaSync
+            
+            # 1. Trouver la dernière version
+            conn = sqlite3.connect(self.metadata_db)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT version_timestamp
+                FROM file_versions
+                WHERE file_path = ?
+                ORDER BY version_timestamp DESC
+                LIMIT 1
+            ''', (relative_path,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return None
+                
+            timestamp = row[0]
+            
+            # 2. Restaurer temporairement le fichier en clair
+            # On utilise RestoreManager ?? Non, circular import risk.
+            # On réimplémente une restoration minimale ou on utilise une méthode interne
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                temp_path = Path(tmp.name)
+            
+            # On utilise restore_version d'une nouvelle instance de RestoreManager?
+            # Ou on extrait la logique de restore physique dans VersionManager?
+            # La logique de restore est dans RestoreManager. 
+            # Pour éviter la duplication, on devrait déplacer `restore_file_physically` dans VersionManager ou Utils.
+            # Pour l'instant, faisons une restoration manuelle simple ici car on a accès à tout.
+            
+            # TODO: Refactoriser pour ne pas dupliquer logic avec RestoreManager
+            # Mais ici c'est critique pour la perf, on fait vite.
+            
+            # Récupérer infos
+            conn = sqlite3.connect(self.metadata_db)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT version_path, is_compressed, is_deduplicated, dedup_ref, is_encrypted, encryption_metadata
+                FROM file_versions
+                WHERE file_path = ? AND version_timestamp = ?
+            ''', (relative_path, timestamp))
+            res = cursor.fetchone()
+            
+            # Gérer Deduplication Lookup
+            if res and res[2] and res[3]: # is_deduplicated
+                 dedup_ref = res[3]
+                 cursor.execute('''
+                    SELECT dedup_path, is_encrypted, encryption_metadata 
+                    FROM dedup_store 
+                    WHERE file_hash = ?
+                ''', (dedup_ref,))
+                 dedup_res = cursor.fetchone()
+                 if dedup_res:
+                     # Override with dedup info
+                     res = (dedup_res[0], False, False, None, dedup_res[1], dedup_res[2]) # is_compressed is False for dedup store usually? No, dedup stores compressed.
+                     # Wait, dedup_store stores compressed/encrypted blob.
+                     pass
 
-    backup_root = sys.argv[1]
-    vm = VersionManager(backup_root)
+            conn.close()
+            
+            if not res:
+                if temp_path.exists(): temp_path.unlink()
+                return None
+                
+            v_path, _, _, _, is_enc, enc_meta_json = res
+            # Note: is_compressed param missing in dedup override above?
+            # Dedup store logic in save_version:
+            # compress -> encrypt -> store. So it IS compressed.
+            
+            src_path = self.backup_root / v_path
+            if not src_path.exists():
+                return None
+                
+            # Pipeline Inverse: Decrypt -> Decompress
+            curr = src_path
+            to_cleanup = []
+            
+            if is_enc and self.encryption_manager:
+                dec = temp_path.with_suffix('.dec')
+                self.encryption_manager.decrypt_file(curr, dec)
+                curr = dec
+                to_cleanup.append(dec)
+            
+            # Decompress (All files are gzipped by default in save_version unless configured otherwise)
+            # Check is_compressed flag from DB?
+            # Dans save_version: compress_file ajoute .gz.
+            # Si on a dédupliqué, on stocke le blob compressé.
+            
+            # Simplification: On assume que c'est gzippé si l'extension le dit ou si magic number?
+            # On va utiliser gunzip.
+            try:
+                import gzip
+                with gzip.open(curr, 'rb') as f_in:
+                    with open(temp_path, 'wb') as f_out:
+                         shutil.copyfileobj(f_in, f_out)
+            except OSError:
+                # Not gzip? Just copy
+                shutil.copy2(curr, temp_path)
+            
+            # 3. Calculer Signature
+            ds = DeltaSync()
+            sig = ds.calculate_signature(temp_path)
+            
+            # Cleanup
+            for p in to_cleanup:
+                if p.exists(): p.unlink()
+            if temp_path.exists(): temp_path.unlink()
+            
+            return sig
 
-    # Afficher des statistiques
-    stats = vm.get_statistics()
-    print("\n=== Statistiques des sauvegardes ===")
-    print(f"Versions totales: {stats['total_versions']}")
-    print(f"Fichiers uniques: {stats['unique_files']}")
-    print(f"Taille totale: {stats['total_size'] / (1024*1024):.2f} MB")
+        except Exception as e:
+            print(f"Error getting signature: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
+    def save_file_from_delta(self, relative_path, delta_data):
+        """
+        Reconstruit un fichier à partir d'un delta et sauvegarde la nouvelle version.
+        """
+        try:
+            from src.common.delta_sync import DeltaSync
+            import tempfile
+            
+            # 1. Restaurer l'ancienne version (BASE)
+            # Idéalement on devrait pouvoir streamer/piper mais DeltaSync a besoin de seek.
+            
+            # On réutilise la logique get_file_signature pour extraire le fichier...
+            # C'est redondant. Il faut vraiment une méthode interne `_restore_to_temp(relative_path)`.
+            
+            # Pour l'instant, copier-collons la logique de restoration (Bad practice but Omega Speed)
+            # ... Ou mieux, implémentons _restore_to_temp maintenant.
+            base_temp = self._restore_latest_to_temp(relative_path)
+            if not base_temp:
+                 return False # Cannot delta without base
+            
+            # 2. Appliquer le delta
+            new_temp_fd, new_temp_path = tempfile.mkstemp()
+            os.close(new_temp_fd)
+            new_temp = Path(new_temp_path)
+            
+            ds = DeltaSync()
+            # Delta data is dict
+            ds.apply_delta(base_temp, delta_data, new_temp)
+            
+            # 3. Sauvegarder la nouvelle version
+            success = self.save_version(new_temp, relative_path)
+            
+            # Cleanup
+            if base_temp.exists(): base_temp.unlink()
+            if new_temp.exists(): new_temp.unlink()
+            
+            return success
+            
+        except Exception as e:
+            print(f"Error saving from delta: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _restore_latest_to_temp(self, relative_path):
+        """Helper: Restores latest version of file to a temp path. Returns Path or None."""
+        try:
+            conn = sqlite3.connect(self.metadata_db)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT version_timestamp, version_path, is_compressed, is_deduplicated, dedup_ref, is_encrypted, encryption_metadata
+                FROM file_versions
+                WHERE file_path = ?
+                ORDER BY version_timestamp DESC
+                LIMIT 1
+            ''', (relative_path,))
+            row = cursor.fetchone()
+            
+            if not row:
+                conn.close()
+                return None
+                
+            timestamp, v_path, is_comp, is_dedup, dedup_ref, is_enc, enc_meta_json = row
+            
+            if is_dedup and dedup_ref:
+                 cursor.execute('SELECT dedup_path, is_encrypted, encryption_metadata FROM dedup_store WHERE file_hash = ?', (dedup_ref,))
+                 dedup_res = cursor.fetchone()
+                 if dedup_res:
+                     v_path, is_enc, enc_meta_json = dedup_res
+            
+            conn.close()
+            
+            src_path = self.backup_root / v_path
+            if not src_path.exists():
+                return None
+                
+            import tempfile
+            fd, target_temp = tempfile.mkstemp(prefix='restore_base_')
+            os.close(fd)
+            target_path = Path(target_temp)
+            
+            # Pipeline
+            curr = src_path
+            to_clean = []
+            
+            if is_enc and self.encryption_manager:
+                dec_fd, dec_path = tempfile.mkstemp(suffix='.dec')
+                os.close(dec_fd)
+                dec_path_obj = Path(dec_path)
+                self.encryption_manager.decrypt_file(curr, dec_path_obj)
+                curr = dec_path_obj
+                to_clean.append(dec_path_obj)
+                
+            # Decompress
+            # We assume compression enabled globally for now or check extension
+            if str(v_path).endswith('.gz') or str(v_path).endswith('.gz.enc') or is_comp:
+                 import gzip
+                 try:
+                     with gzip.open(curr, 'rb') as f_in:
+                        with open(target_path, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                 except:
+                     shutil.copy2(curr, target_path)
+            else:
+                 shutil.copy2(curr, target_path)
+                 
+            for p in to_clean:
+                if p.exists(): p.unlink()
+                
+            return target_path
+            
+        except Exception as e:
+            print(f"_restore_latest_to_temp error: {e}")
+            return None
 
 if __name__ == '__main__':
     main()

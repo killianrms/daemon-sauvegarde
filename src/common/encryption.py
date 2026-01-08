@@ -16,33 +16,40 @@ import base64
 import json
 
 class EncryptionManager:
-    """Gestionnaire de chiffrement AES-256-GCM"""
+    """Gestionnaire de chiffrement AES-256-GCM (v3.0 Envelope)"""
 
     def __init__(self, password=None, key_file=None):
         """
         Initialise le gestionnaire de chiffrement
-
+        
         Args:
-            password: Mot de passe pour dériver la clé
-            key_file: Fichier contenant la clé (alternative au password)
+            password: Mot de passe pour déverrouiller la clé maîtresse
+            key_file: Fichier de stockage de la clé
         """
-        self.key = None
+        self.master_key = None # The actual key used for file encryption
         self.key_file = key_file or Path.home() / '.backup_encryption_key'
+        self.salt = None
+        self.wrapped_key = None # Encrypted Master Key
 
-        if password:
-            self.key = self._derive_key(password)
-        elif self.key_file.exists():
-            self.key = self._load_key()
+        if self.key_file.exists():
+            self._load_key_file(password)
+        elif password:
+            # New Setup
+            self.salt = os.urandom(16)
+            self.master_key = AESGCM.generate_key(bit_length=256)
+            self._save_key_file(password)
         else:
-            # Générer une nouvelle clé si aucune n'existe
-            self.key = AESGCM.generate_key(bit_length=256)
-            self._save_key()
+            # No password, generate random master key and save it (unencrypted/raw check?)
+            # For this secure system, we require a password effectively for wrapping usually.
+            # But let's support "No Password" mode where we just store Master Key raw?
+            # Or generate a random KEK?
+            # Let's assume password is mandatory for v3 or we use a default one?
+            # Revert to raw storage if no password (same as before but explicit)
+            self.master_key = AESGCM.generate_key(bit_length=256)
+            self._save_key_file(None)
 
-    def _derive_key(self, password, salt=None):
-        """Dérive une clé de 256 bits depuis un mot de passe"""
-        if salt is None:
-            salt = b'backup_system_salt_v1'  # Salt fixe (idéalement stocké séparément)
-
+    def _derive_kek(self, password, salt):
+        """Dérive la Key Encryption Key (KEK) depuis le mot de passe"""
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -52,32 +59,122 @@ class EncryptionManager:
         )
         return kdf.derive(password.encode())
 
-    def _save_key(self):
-        """Sauvegarde la clé de chiffrement"""
-        self.key_file.parent.mkdir(parents=True, exist_ok=True)
+    def _save_key_file(self, password):
+        """Sauvegarde la clé (enveloppée si mot de passe fourni)"""
+        try:
+            if not self.key_file.exists():
+                self.key_file.touch(mode=0o600)
+            else:
+                os.chmod(self.key_file, 0o600)
+            self.key_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Encoder en base64 pour stockage
-        key_b64 = base64.b64encode(self.key).decode()
+            data = {
+                'version': '3.0',
+                'algorithm': 'AES-256-GCM',
+                'salt': base64.b64encode(self.salt).decode() if self.salt else None
+            }
 
-        with open(self.key_file, 'w') as f:
-            json.dump({
-                'key': key_b64,
-                'version': '1.0',
-                'algorithm': 'AES-256-GCM'
-            }, f)
+            if password and self.salt:
+                # Envelope Encryption
+                kek = self._derive_kek(password, self.salt)
+                aesgcm = AESGCM(kek)
+                nonce = os.urandom(12)
+                wrapped = aesgcm.encrypt(nonce, self.master_key, None)
+                
+                data['mode'] = 'wrapped'
+                data['nonce'] = base64.b64encode(nonce).decode()
+                data['key'] = base64.b64encode(wrapped).decode()
+            else:
+                # Raw Storage
+                data['mode'] = 'raw'
+                data['key'] = base64.b64encode(self.master_key).decode()
 
-        # Permissions restrictives
-        os.chmod(self.key_file, 0o600)
-        print(f"✓ Clé de chiffrement sauvegardée: {self.key_file}")
+            with open(self.key_file, 'w') as f:
+                json.dump(data, f)
+            os.chmod(self.key_file, 0o600)
+            
+        except Exception as e:
+            print(f"Error saving key: {e}")
+            raise
 
-    def _load_key(self):
-        """Charge la clé de chiffrement depuis le fichier"""
+    def _load_key_file(self, password):
         try:
             with open(self.key_file, 'r') as f:
                 data = json.load(f)
-                return base64.b64decode(data['key'])
+
+            version = data.get('version', '1.0')
+            
+            # Migration V2 -> V3
+            if version == '2.0' or version == '1.0':
+                # Old format: key was derived directly or stored directly.
+                # V2: stored derived key in 'key' field, salt in 'salt'.
+                # We can't verify password easily without trying to derive and match?
+                # Actually V2 stored the KEY itself.
+                # If password was used, we derived logic outside.
+                # Wait, my previous V2 implementation stored `key = derived_key`.
+                # So if we load it, we have the Master Key directly.
+                # We can migrate it to wrapped format if password is provided.
+                
+                stored_key_b64 = data.get('key')
+                if not stored_key_b64: raise ValueError("Corrupt key file")
+                self.master_key = base64.b64decode(stored_key_b64)
+                
+                if data.get('salt'):
+                    self.salt = base64.b64decode(data['salt'])
+                else:
+                    self.salt = os.urandom(16)
+                    
+                print("⚠ Migrating Key File from v2 to v3 (Envelope Encryption)...")
+                self._save_key_file(password)
+                return
+
+            # V3 Loading
+            self.salt = base64.b64decode(data['salt']) if data.get('salt') else None
+            mode = data.get('mode', 'raw')
+            encrypted_key = base64.b64decode(data['key'])
+            
+            if mode == 'wrapped':
+                if not password:
+                    raise ValueError("Password required to unlock this key file.")
+                if not self.salt:
+                     raise ValueError("Corrupt key file: Wrapped mode without salt.")
+                     
+                nonce = base64.b64decode(data['nonce'])
+                kek = self._derive_kek(password, self.salt)
+                aesgcm = AESGCM(kek)
+                try:
+                    self.master_key = aesgcm.decrypt(nonce, encrypted_key, None)
+                except:
+                    raise ValueError("Incorrect password.")
+            else:
+                self.master_key = encrypted_key
+
         except Exception as e:
-            raise Exception(f"Impossible de charger la clé de chiffrement: {e}")
+            raise Exception(f"Key load failed: {e}")
+
+    @property
+    def key(self):
+        # Compatibility with existing code that accesses .key
+        return self.master_key
+
+    @key.setter
+    def key(self, value):
+        self.master_key = value
+
+    def change_password(self, old_password, new_password):
+        """Change le mot de passe sans rechiffrer les données (Key Wrapping)"""
+        # 1. Verify old password (unlock)
+        # We assume self.master_key is already loaded/valid.
+        # But to be sure, we can try to unlock again?
+        # If we are here, self.master_key is in memory.
+        
+        # We just re-wrap with new password.
+        print("⟳ Re-wrapping Master Key with new password...")
+        
+        # Generate new salt for the new password wrapping (Good practice)
+        self.salt = os.urandom(16)
+        self._save_key_file(new_password)
+        print("✓ Mot de passe changé (Données préservées).")
 
     def encrypt_file(self, input_file, output_file):
         """
@@ -170,22 +267,31 @@ class EncryptionManager:
         return aesgcm.decrypt(nonce, ciphertext, None)
 
     def change_password(self, old_password, new_password):
-        """Change le mot de passe de chiffrement"""
-        old_key = self._derive_key(old_password)
-
-        # Vérifier que l'ancien mot de passe est correct
-        if old_key != self.key:
-            raise ValueError("Ancien mot de passe incorrect")
-
-        # Dériver nouvelle clé
-        new_key = self._derive_key(new_password)
-
-        # TODO: Rechiffrer tous les fichiers avec la nouvelle clé
-        # Pour l'instant, juste sauvegarder la nouvelle clé
-        self.key = new_key
-        self._save_key()
-
-        print("✓ Mot de passe changé avec succès")
+        """Change le mot de passe sans rechiffrer les données (Key Wrapping)"""
+        try:
+             # Verify old password
+             # We assume current key_file corresponds to current self.master_key
+             # Load in a temp instance to verify authentication
+             # Note: This works for both v2 (migrated on load) and v3
+             # If v2, loading it triggers migration save?? Wait.
+             # My _load_key_file logic migrates IF v2. 
+             # So calling EncryptionManager(old_password) will migrate it on disk if it was v2.
+             # That's fine.
+             
+             # Avoid infinite recursion or file lock? 
+             # Loading reads file. Safe.
+             
+             # We pass self.key_file.
+             EncryptionManager(password=old_password, key_file=self.key_file)
+             
+             # If successful, we can re-wrap
+             print("⟳ Re-wrapping Master Key with new password...")
+             self.salt = os.urandom(16)
+             self._save_key_file(new_password)
+             print("✓ Mot de passe changé (Données préservées).")
+             
+        except Exception as e:
+            raise ValueError(f"Ancien mot de passe incorrect: {e}")
 
     def get_info(self):
         """Retourne les informations sur la configuration de chiffrement"""

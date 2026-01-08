@@ -14,8 +14,9 @@ class DeltaSync:
     """Gestionnaire de synchronisation incrémentale"""
 
     BLOCK_SIZE = 4096  # Taille des blocs pour la signature
-
-    def __init__(self):
+    
+    def __init__(self, block_size=None):
+        self.block_size = block_size or self.BLOCK_SIZE
         self.signatures_cache = {}
 
     def calculate_signature(self, file_path, block_size=None):
@@ -29,7 +30,7 @@ class DeltaSync:
         Returns:
             dict: Signature du fichier
         """
-        block_size = block_size or self.BLOCK_SIZE
+        block_size = block_size or self.block_size
         blocks = []
 
         try:

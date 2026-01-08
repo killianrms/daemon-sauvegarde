@@ -1,4 +1,4 @@
-.PHONY: help install install-server install-client setup-server setup-client start-server start-client stop-client clean test check-deps restore restore-interactive list-versions cleanup cleanup-dry-run stats setup-cron web web-start web-stop web-status test-encryption test-delta test-integrity test-restore health-check
+.PHONY: help install install-server install-client setup-server setup-client start-server start-client stop-client clean check-deps restore restore-interactive list-versions cleanup cleanup-dry-run stats setup-cron health-check
 
 
 # Variables
@@ -7,7 +7,6 @@ VENV := venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 CLIENT_PID_FILE := .client.pid
-WEB_PID_FILE := .web.pid
 
 # Couleurs pour l'affichage
 BLUE := \033[0;34m
@@ -130,9 +129,9 @@ logs-server: ## Affiche les logs SSH du serveur
 
 test-connection: ## Teste la connexion SSH au serveur
 	@echo "$(BLUE)Test de connexion au serveur...$(NC)"
-	@SERVER_HOST=$$(grep -o '"server_host"[[:space:]]*:[[:space:]]*"[^"]*"' client_config.json | cut -d'"' -f4); \
-	SERVER_USER=$$(grep -o '"server_username"[[:space:]]*:[[:space:]]*"[^"]*"' client_config.json | cut -d'"' -f4); \
-	SSH_KEY=$$(grep -o '"ssh_key_file"[[:space:]]*:[[:space:]]*"[^"]*"' client_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
+	@SERVER_HOST=$$(python3 -c "import json; print(json.load(open('client_config.json'))['server_host'])"); \
+	SERVER_USER=$$(python3 -c "import json; print(json.load(open('client_config.json'))['server_username'])"); \
+	SSH_KEY=$$(python3 -c "import json; import os; print(os.path.expanduser(json.load(open('client_config.json'))['ssh_key_file']))"); \
 	echo "$(YELLOW)Connexion à $$SERVER_USER@$$SERVER_HOST...$(NC)"; \
 	ssh -i $$SSH_KEY -o ConnectTimeout=5 $$SERVER_USER@$$SERVER_HOST "echo '$(GREEN)✓ Connexion SSH réussie$(NC)'" || \
 	echo "$(RED)✗ Échec de connexion$(NC)"
@@ -261,86 +260,10 @@ setup-cron: ## Configure le nettoyage automatique avec cron (serveur)
 	fi; \
 	$(PYTHON) src/server/cleanup.py "$$BACKUP_PATH" --setup-cron
 
-# === Interface Web ===
-
-web: web-start ## Alias pour démarrer l'interface web
-
-web-start: ## Démarre l'interface web (serveur)
-	@echo "$(BLUE)Démarrage de l'interface web...$(NC)"
-	@$(PYTHON) src/web/app.py
-
-web-bg: ## Démarre l'interface web en arrière-plan (serveur)
-	@echo "$(BLUE)Démarrage de l'interface web en arrière-plan...$(NC)"
-	@nohup $(PYTHON) src/web/app.py > web.log 2>&1 & echo $$! > $(WEB_PID_FILE)
-	@echo "$(GREEN)✓ Interface web démarrée (PID: $$(cat $(WEB_PID_FILE)))$(NC)"
-	@echo "$(YELLOW)Accédez à http://localhost:5000$(NC)"
-	@echo "$(YELLOW)Logs: tail -f web.log$(NC)"
-
-web-stop: ## Arrête l'interface web
-	@if [ -f $(WEB_PID_FILE) ]; then \
-		PID=$$(cat $(WEB_PID_FILE)); \
-		if ps -p $$PID > /dev/null; then \
-			echo "$(BLUE)Arrêt de l'interface web (PID: $$PID)...$(NC)"; \
-			kill $$PID; \
-			rm $(WEB_PID_FILE); \
-			echo "$(GREEN)✓ Interface web arrêtée$(NC)"; \
-		else \
-			echo "$(YELLOW)Le processus n'est plus actif$(NC)"; \
-			rm $(WEB_PID_FILE); \
-		fi \
-	else \
-		echo "$(YELLOW)Aucune interface web en arrière-plan détectée$(NC)"; \
-	fi
-
-web-status: ## Affiche le statut de l'interface web
-	@if [ -f $(WEB_PID_FILE) ]; then \
-		PID=$$(cat $(WEB_PID_FILE)); \
-		if ps -p $$PID > /dev/null; then \
-			echo "$(GREEN)✓ Interface web active (PID: $$PID)$(NC)"; \
-			echo "$(YELLOW)Accès: http://localhost:5000$(NC)"; \
-		else \
-			echo "$(RED)✗ Interface web inactive (PID fichier obsolète)$(NC)"; \
-		fi \
-	else \
-		echo "$(YELLOW)Interface web non démarrée$(NC)"; \
-	fi
-
-web-logs: ## Affiche les logs de l'interface web
-	@if [ -f web.log ]; then \
-		tail -f web.log; \
-	else \
-		echo "$(YELLOW)Aucun fichier de log trouvé$(NC)"; \
-	fi
 
 # Alias communs
 run-client: start-client ## Alias pour start-client
 run-server: start-server ## Alias pour start-server
-
-# === Tests et Fiabilité ===
-
-test-encryption: ## Teste le chiffrement AES-256
-	@echo "$(BLUE)Test du chiffrement...$(NC)"
-	@$(PYTHON) src/common/encryption.py
-
-test-delta: ## Teste le delta sync (transfert incrémental)
-	@echo "$(BLUE)Test du delta sync...$(NC)"
-	@$(PYTHON) src/common/delta_sync.py
-
-test-integrity: ## Vérifie l'intégrité de N fichiers aléatoires (usage: make test-integrity N=10)
-	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
-	if [ -z "$$BACKUP_PATH" ]; then \
-		BACKUP_PATH="$(HOME)/backups"; \
-	fi; \
-	N=$${N:-10}; \
-	$(PYTHON) src/server/reliability.py "$$BACKUP_PATH" --integrity $$N
-
-test-restore: ## Teste la restauration de N fichiers (usage: make test-restore N=5)
-	@BACKUP_PATH=$$(grep -o '"backup_path"[[:space:]]*:[[:space:]]*"[^"]*"' server_config.json | cut -d'"' -f4 | sed 's|~|$(HOME)|'); \
-	if [ -z "$$BACKUP_PATH" ]; then \
-		BACKUP_PATH="$(HOME)/backups"; \
-	fi; \
-	N=$${N:-5}; \
-	$(PYTHON) src/server/reliability.py "$$BACKUP_PATH" --restore $$N
 
 health-check: ## Health check complet du système (serveur)
 	@echo "$(BLUE)Health Check du système...$(NC)"

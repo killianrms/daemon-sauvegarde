@@ -1,0 +1,15 @@
+[Unit]
+Description=Daemon Sauvegarde Client
+After=network.target
+
+[Service]
+Type=simple
+User=depinfo
+WorkingDirectory=/home/depinfo/daemon-sauvegarde
+ExecStart=/usr/bin/python3 src/client/daemon.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -25,6 +25,17 @@ class BackupDaemon:
         self.watch_path = self.config.get('watch_path', './sauvegarde')
         self.ssh_client = SecureSSHClient(self.config)
         self.observer = None
+        self.running = True
+        
+        # Signals
+        import signal
+        signal.signal(signal.SIGINT, self.handle_signal)
+        signal.signal(signal.SIGTERM, self.handle_signal)
+
+    def handle_signal(self, signum, frame):
+        logger.info(f"Received signal {signum}, shutting down...")
+        self.running = False
+        self.stop()
 
     def initial_sync(self):
         """Initial synchronization of all files"""
@@ -36,7 +47,11 @@ class BackupDaemon:
             return False
 
         for root, dirs, files in os.walk(watch_dir):
+            if not self.running: break
+            
             for file in files:
+                if not self.running: break
+                
                 if '.git' in root or '__pycache__' in root:
                     continue
                     
@@ -59,8 +74,6 @@ class BackupDaemon:
         # Connect to server
         if not self.ssh_client.connect():
             logger.error("Could not connect to server. Retrying in 5 seconds...")
-            # We could add a retry loop here, but for now exit as per original logic or improved?
-            # Original logic exit. Let's exit to be safe.
             sys.exit(1)
 
         # Initial Sync
@@ -80,14 +93,19 @@ class BackupDaemon:
 
         logger.info("✓ Surveillance active. Press Ctrl+C to stop.")
 
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.stop()
+        while self.running:
+            time.sleep(0.5)
+            # Check SSH health?
+            # ssh_client.ensure_connection() is called on send_file, but maybe we should keepalive?
+            # For now relying on on-demand reconnect.
+
+        self.stop()
 
     def stop(self):
         """Stops the daemon"""
+        if not self.running: # Already stopped logic
+             pass # Or re-entrant safety
+             
         logger.info("Stopping daemon...")
         if self.observer:
             self.observer.stop()
